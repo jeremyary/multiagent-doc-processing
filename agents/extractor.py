@@ -103,7 +103,14 @@ class PDFExtractorAgent(BaseAgent):
                 "messages": [f"No PDF files found in {input_dir}"]
             }
         
-        self.log(f"Found {len(pdf_files)} PDF files")
+        # Apply document limit if specified
+        doc_limit = state.get("doc_limit")
+        total_found = len(pdf_files)
+        if doc_limit is not None and doc_limit > 0:
+            pdf_files = pdf_files[:doc_limit]
+            self.log(f"Found {total_found} PDF files, processing first {len(pdf_files)} (--limit {doc_limit})")
+        else:
+            self.log(f"Found {len(pdf_files)} PDF files")
         
         extracted_docs: list[ExtractedDocument] = []
         errors: list[WorkflowError] = []

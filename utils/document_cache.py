@@ -7,6 +7,7 @@ from typing import Optional
 from datetime import datetime
 
 from models import ExtractedDocument, ClassifiedDocument
+from config import config
 
 
 class DocumentCache:
@@ -226,4 +227,4 @@ class DocumentCache:
 
 
 # Global cache instance
-document_cache = DocumentCache()
+document_cache = DocumentCache(config.DOCUMENT_CACHE_DB_PATH)

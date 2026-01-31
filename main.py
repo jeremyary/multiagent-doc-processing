@@ -2,11 +2,13 @@
 # This project was developed with assistance from AI tools.
 import argparse
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from config import config
 from orchestrator import create_orchestrator
 from utils.document_cache import document_cache
+from utils.human_review import collect_human_review_cli
 
 
 def parse_args() -> argparse.Namespace:
@@ -16,12 +18,14 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python main.py                           # Process PDFs from default input_pdfs directory
-  python main.py --input-dir ./documents   # Process PDFs from specified directory
-  python main.py --no-checkpointing        # Run without state checkpointing
-  python main.py --cache-stats             # View cache statistics
-  python main.py --clear-cache             # Clear document cache before processing
-  python main.py --no-cache                # Run without document caching
+  python main.py                                     # Process PDFs from default directory
+  python main.py --input-dir ./documents             # Process PDFs from specified directory
+  python main.py --limit 5                           # Process only first 5 documents
+  python main.py --thread-id <id>                    # Resume workflow or start with specific ID
+  python main.py --cache-stats                       # View cache statistics
+  python main.py --clear-cache                       # Clear document cache before processing
+  python main.py --no-cache                          # Run without document caching
+  python main.py --no-checkpointing                  # Run without state checkpointing
 
 Environment Variables (see .env.example):
   OPENAI_API_KEY        Required. Your OpenAI API key
@@ -56,7 +60,7 @@ Environment Variables (see .env.example):
         "--thread-id",
         type=str,
         default=None,
-        help="Thread ID for checkpointing (enables resumable workflows)"
+        help="Thread ID for checkpointing (resumes if checkpoint exists)"
     )
     
     parser.add_argument(
@@ -82,6 +86,14 @@ Environment Variables (see .env.example):
         "--cache-stats",
         action="store_true",
         help="Show cache statistics and exit"
+    )
+    
+    parser.add_argument(
+        "--limit", "-l",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Limit processing to first N documents (default: all)"
     )
     
     return parser.parse_args()
@@ -156,23 +168,32 @@ def main() -> int:
     else:
         print("Document Cache: Disabled for this run")
     
+    # Generate thread_id if not provided
+    thread_id = args.thread_id or f"doc-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    
     # Create and run orchestrator
     try:
         orchestrator = create_orchestrator(
             checkpointing=not args.no_checkpointing
         )
         
-        # Execute workflow
-        final_state = orchestrator.run(
+        # Execute workflow with human-in-the-loop handler
+        final_state, thread_id = orchestrator.run(
             input_directory=str(input_dir),
-            thread_id=args.thread_id,
+            thread_id=thread_id,
             session_id=args.session_id,
-            use_cache=not args.no_cache
+            use_cache=not args.no_cache,
+            doc_limit=args.limit,
+            interrupt_handler=collect_human_review_cli
         )
         
         # Return code based on success
         if final_state.get("report_generated"):
             print("\nWorkflow completed successfully!")
+            return 0
+        elif "__interrupt__" in final_state:
+            print(f"\n[INFO] Workflow paused. To resume:")
+            print(f"  python main.py --thread-id {thread_id}")
             return 0
         else:
             print("\n[WARNING] Workflow completed with issues.")

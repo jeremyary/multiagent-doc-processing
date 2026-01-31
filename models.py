@@ -65,6 +65,7 @@ class WorkflowState(TypedDict):
     
     # Input
     input_directory: str
+    doc_limit: int | None
     
     # Extraction phase
     pdf_files: list[str]

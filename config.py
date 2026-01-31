@@ -43,11 +43,13 @@ class Config:
     OCR_MIN_FREE_VRAM_GB: float = float(os.getenv("OCR_MIN_FREE_VRAM_GB", "3.0"))
     
     # ==========================================================================
-    # Directory Paths
+    # Directory Paths and Storage
     # ==========================================================================
     BASE_DIR: Path = Path(__file__).parent
     INPUT_PDF_DIR: Path = Path(os.getenv("INPUT_PDF_DIR", "./input_pdfs"))
     OUTPUT_REPORT_DIR: Path = Path(os.getenv("OUTPUT_REPORT_DIR", "./output_reports"))
+    CHECKPOINT_DB_PATH: str = os.getenv("CHECKPOINT_DB_PATH", ".workflow_checkpoints.db")
+    DOCUMENT_CACHE_DB_PATH: str = os.getenv("DOCUMENT_CACHE_DB_PATH", ".document_cache.db")
     
     # ==========================================================================
     # Document Categories (Mortgage Loan Process)
