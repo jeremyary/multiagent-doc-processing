@@ -6,6 +6,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+def _resolve_db_path(env_var: str, default: str, base_dir: Path) -> str:
+    """Resolve database path, making relative paths absolute from base_dir."""
+    path = os.getenv(env_var, default)
+    if os.path.isabs(path):
+        return path
+    return str(base_dir / path)
+
+
 class Config:
     """Application configuration."""
     
@@ -48,8 +56,10 @@ class Config:
     BASE_DIR: Path = Path(__file__).parent
     INPUT_PDF_DIR: Path = Path(os.getenv("INPUT_PDF_DIR", "./input_pdfs"))
     OUTPUT_REPORT_DIR: Path = Path(os.getenv("OUTPUT_REPORT_DIR", "./output_reports"))
-    CHECKPOINT_DB_PATH: str = os.getenv("CHECKPOINT_DB_PATH", ".workflow_checkpoints.db")
-    DOCUMENT_CACHE_DB_PATH: str = os.getenv("DOCUMENT_CACHE_DB_PATH", ".document_cache.db")
+    
+    # Database paths (relative paths resolved from BASE_DIR)
+    CHECKPOINT_DB_PATH: str = _resolve_db_path("CHECKPOINT_DB_PATH", ".workflow_checkpoints.db", BASE_DIR)
+    DOCUMENT_CACHE_DB_PATH: str = _resolve_db_path("DOCUMENT_CACHE_DB_PATH", ".document_cache.db", BASE_DIR)
     
     # ==========================================================================
     # Document Categories (Mortgage Loan Process)

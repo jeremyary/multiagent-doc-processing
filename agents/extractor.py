@@ -2,13 +2,12 @@
 from pathlib import Path
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
-import pdfplumber
 
 from .base import BaseAgent
 from config import config as app_config
 from models import ExtractedDocument, WorkflowState, WorkflowError, ExtractionResult
 from utils.document_cache import document_cache
-from utils.ocr import ocr_pdf, needs_ocr
+from utils.pdf import extract_text_from_pdf
 from prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT
 
 
@@ -23,50 +22,6 @@ class PDFExtractorAgent(BaseAgent):
             ("human", EXTRACTION_USER_PROMPT)
         ])
         self.extraction_chain = self.extraction_prompt | self.llm.with_structured_output(ExtractionResult)
-    
-    def extract_text_from_pdf(self, pdf_path: Path) -> tuple[str, int, dict]:
-        """
-        Extract text content from a PDF file.
-        Uses pdfplumber for machine-generated PDFs, falls back to OCR for scanned docs.
-        """
-        text_content = []
-        metadata = {}
-        
-        try:
-            with pdfplumber.open(pdf_path) as pdf:
-                page_count = len(pdf.pages)
-                metadata["page_count"] = page_count
-                
-                if pdf.metadata:
-                    metadata["pdf_metadata"] = {
-                        k: str(v) for k, v in pdf.metadata.items() 
-                        if v is not None
-                    }
-                
-                for i, page in enumerate(pdf.pages):
-                    page_text = page.extract_text() or ""
-                    if page_text.strip():
-                        text_content.append(f"--- Page {i + 1} ---\n{page_text}")
-                
-                full_text = "\n\n".join(text_content)
-                metadata["ocr_used"] = False
-                
-                # Check if OCR is needed (scanned/image-based PDF)
-                if app_config.OCR_ENABLED and needs_ocr(
-                    full_text, 
-                    page_count, 
-                    app_config.OCR_MIN_CHARS_PER_PAGE
-                ):
-
-                    self.log(f"  Low text content detected, using OCR...")
-                    ocr_text, ocr_metadata = ocr_pdf(pdf_path)
-                    if ocr_text.strip():
-                        full_text = ocr_text
-                
-                return full_text, page_count, metadata
-                
-        except Exception as e:
-            raise RuntimeError(f"Failed to extract text from {pdf_path}: {str(e)}")
     
     def analyze_content(self, filename: str, text: str, config: RunnableConfig) -> ExtractionResult:
         """Use LLM to summarize and extract entities from the text."""
@@ -137,9 +92,13 @@ class PDFExtractorAgent(BaseAgent):
                     self.log(f"  [CACHE HIT] Using cached extraction")
                     continue
                 
-                raw_text, page_count, metadata = self.extract_text_from_pdf(pdf_path)
+                # Use shared PDF extraction utility
+                extraction = extract_text_from_pdf(pdf_path, include_page_markers=True)
                 
-                if not raw_text.strip():
+                if extraction.ocr_used:
+                    self.log(f"  OCR used (confidence: {extraction.ocr_confidence:.0%})")
+                
+                if extraction.is_empty:
                     errors.append(WorkflowError(
                         code="EMPTY_DOCUMENT",
                         message="No text content extracted from PDF",
@@ -150,15 +109,24 @@ class PDFExtractorAgent(BaseAgent):
                     ))
                     continue
                 
-                result = self.analyze_content(pdf_path.name, raw_text, config)
+                result = self.analyze_content(pdf_path.name, extraction.text, config)
                 
-                metadata["content_hash"] = content_hash
-                metadata["from_cache"] = False
+                metadata = {
+                    "page_count": extraction.page_count,
+                    "ocr_used": extraction.ocr_used,
+                    "content_hash": content_hash,
+                    "from_cache": False,
+                }
+                if extraction.pdf_metadata:
+                    metadata["pdf_metadata"] = extraction.pdf_metadata
+                if extraction.ocr_confidence is not None:
+                    metadata["ocr_confidence"] = extraction.ocr_confidence
+                
                 doc = ExtractedDocument(
                     file_path=str(pdf_path),
                     file_name=pdf_path.name,
-                    page_count=page_count,
-                    raw_text=raw_text,
+                    page_count=extraction.page_count,
+                    raw_text=extraction.text,
                     summary=result.summary,
                     key_entities=result.entities,
                     metadata=metadata
@@ -167,7 +135,7 @@ class PDFExtractorAgent(BaseAgent):
                 
                 if use_cache:
                     document_cache.store_extraction(content_hash, pdf_path.name, doc)
-                self.log(f"  Extracted {page_count} pages, {len(result.entities)} entities")
+                self.log(f"  Extracted {extraction.page_count} pages, {len(result.entities)} entities")
                 
             except RuntimeError as e:
                 errors.append(WorkflowError(
