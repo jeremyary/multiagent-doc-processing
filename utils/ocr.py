@@ -3,12 +3,12 @@
 OCR utility using docTR with dynamic device selection.
 Falls back to CPU if GPU memory is insufficient.
 """
-from pathlib import Path
 import logging
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded OCR model to avoid import overhead when not needed
+# Lazy-loaded OCR model
 _ocr_model = None
 _ocr_device = None
 

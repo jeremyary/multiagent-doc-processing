@@ -4,21 +4,26 @@ Streamlit-based chat UI for mortgage document assistance.
 
 Run with: streamlit run frontend/app.py
 """
-import streamlit as st
-from datetime import datetime
 import sys
+from datetime import datetime
 from pathlib import Path
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import streamlit as st
+
 from agents import get_chat_agent
-from orchestrator import create_orchestrator
 from config import config
 from frontend.auth import (
-    render_login, render_logout, render_user_info,
-    get_current_user, get_user_thread_prefix, get_user_upload_dir
+    get_current_user,
+    get_user_thread_prefix,
+    get_user_upload_dir,
+    render_login,
+    render_logout,
+    render_user_info,
 )
+from orchestrator import create_orchestrator
 
 # Page configuration
 st.set_page_config(

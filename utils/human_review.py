@@ -1,9 +1,12 @@
 # This project was developed with assistance from AI tools.
+"""
+Human-in-the-loop review for documents with unknown relevance.
+"""
 from langchain_core.runnables import RunnableConfig
 from langgraph.types import interrupt
 
-from models import ClassifiedDocument, WorkflowState
 from config import config as app_config
+from models import ClassifiedDocument, WorkflowState
 
 
 def review_unknown_documents(state: WorkflowState, config: RunnableConfig) -> dict:

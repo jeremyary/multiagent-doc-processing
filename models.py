@@ -1,8 +1,12 @@
 # This project was developed with assistance from AI tools.
-from typing import TypedDict, Annotated, Literal
+"""
+Pydantic models for workflow state, documents, and structured LLM outputs.
+"""
 from datetime import datetime
-from pydantic import BaseModel, Field
 from operator import add
+from typing import Annotated, Literal, TypedDict
+
+from pydantic import BaseModel, Field
 
 
 class WorkflowError(BaseModel):

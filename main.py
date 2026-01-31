@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 # This project was developed with assistance from AI tools.
+"""
+CLI entry point for the document processing workflow and utility commands.
+"""
 import argparse
 import sys
 from datetime import datetime

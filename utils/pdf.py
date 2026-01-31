@@ -6,15 +6,15 @@ Provides a unified interface for extracting text from PDFs,
 with automatic OCR fallback for scanned/image-based documents.
 """
 import logging
-from pathlib import Path
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pdfplumber
 
-logger = logging.getLogger(__name__)
-
 from config import config as app_config
 from utils.ocr import needs_ocr, ocr_pdf
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
