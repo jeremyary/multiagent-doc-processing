@@ -11,34 +11,65 @@ PDF documents go through a multi-step workflow designed for mortgage loan docume
 
 ### Architecture
 
-```
-                                   ┌─────────────────────┐
-                                   │   Human Review      │
-                                   │ (if unknown docs)   │
-                                   └──────────┬──────────┘
-                                              │
-┌─────────┐    ┌─────────────────┐    ┌───────┴───────┐    ┌─────────────────┐    ┌─────────┐
-│  START  │───▶│  PDF Extractor  │───▶│  Classifier   │───▶│ Report Generator│───▶│   END   │
-└─────────┘    └─────────────────┘    └───────────────┘    └─────────────────┘    └─────────┘
-                       │                      │
-                       ▼                      ▼
-               ┌────────────────┐      ┌────────────────┐
-               │ Document Cache │      │ Document Cache │
-               │  (extraction)  │      │(classification)│
-               └────────────────┘      └────────────────┘
+```mermaid
+flowchart TB
+    subgraph workflow["Document Processing Workflow (LangGraph)"]
+        direction TB
+        START((Start)) --> extract[PDF Extractor Agent]
+        extract -->|documents| classify[Classifier Agent]
+        classify -->|unknown docs?| decision{Has Unknown?}
+        decision -->|yes| review[Human Review]
+        decision -->|no| report[Report Generator]
+        review --> report
+        report --> END((End))
+    end
+
+    subgraph chat["Chat Agent (LangGraph)"]
+        direction TB
+        user_msg[User Message] --> retrieve[RAG Retrieval]
+        retrieve --> respond[LLM Response]
+    end
+
+    subgraph storage["Persistence Layer"]
+        direction LR
+        cache[(Document Cache)]
+        checkpoints[(Checkpoints)]
+        chroma[(ChromaDB)]
+    end
+
+    subgraph ui["Web UI (Streamlit)"]
+        direction LR
+        chat_tab[Chat Tab]
+        review_tab[Reviews Tab]
+        reports_tab[Reports Tab]
+    end
+
+    extract -.->|cache hit/miss| cache
+    classify -.->|cache hit/miss| cache
+    workflow -.->|state| checkpoints
+    chat -.->|state| checkpoints
+    retrieve -.->|similarity search| chroma
+
+    ui --> workflow
+    ui --> chat
 ```
 
 ### Components
 
 | Component | Type | Description |
 |-----------|------|-------------|
+| **Document Workflow** | | |
 | PDF Extractor | Agent | Extracts text from PDFs (with OCR fallback), generates summaries and key entities via LLM |
 | Classifier | Agent | Categorizes documents into mortgage-related types with confidence scores |
-| Human Review | Utility | Interactive CLI for manually classifying uncertain documents |
-| Report Generator | Utility | Produces PDF report summarizing all processed documents |
-| Document Cache | Utility | SQLite-based cache for LLM results, keyed by content hash |
-| Chat Assistant | Agent | Conversational agent with RAG for Q&A about mortgage regulations |
-| RAG Manager | Utility | ChromaDB-based vector store for knowledge base retrieval |
+| Human Review | Node | LangGraph interrupt-based review for uncertain classifications |
+| Report Generator | Node | Produces PDF report summarizing all processed documents |
+| **Chat System** | | |
+| Chat Agent | Agent | LangGraph-based conversational agent with optional RAG |
+| RAG Manager | Utility | ChromaDB vector store with HuggingFace embeddings for knowledge retrieval |
+| **Infrastructure** | | |
+| Document Cache | Utility | SQLite cache for LLM results, keyed by content hash |
+| Checkpointer | Utility | SQLite-based state persistence for workflow resumability |
+| OCR | Utility | docTR-based OCR with dynamic CPU/GPU selection |
 
 ## Installation
 
@@ -97,7 +128,8 @@ Creates 28 sample PDFs in `input_pdfs/`:
 - 25 machine-generated PDFs covering all document categories
 - 3 image-based PDFs (scanned documents) for OCR testing
 
-File names omitted from context submitted for classification to better test models, but could easily be reintroduced to allow more probable scenarios.
+File names are omitted from classification context to better test model capabilities, but can be reintroduced for more realistic scenarios.
+
 ### Basic Usage
 
 ```bash
@@ -161,11 +193,40 @@ Options:
 
 Human-reviewed documents are marked in the final report with their original AI classification noted.
 
-## Chat Assistant (Web UI)
+## Knowledge Base (RAG)
 
-A Streamlit-based chat interface for asking questions about mortgage documents and requirements.
+The chat assistant can use Retrieval-Augmented Generation (RAG) to answer questions about mortgage regulations.
+
+### Setup
 
 ```bash
-# Start the chat UI
+# Generate sample regulation PDFs
+python create_knowledge_base.py
+
+# Ingest into vector store
+python main.py --ingest-knowledge
+```
+
+### RAG CLI Options
+
+```bash
+python main.py [RAG OPTIONS]
+
+Options:
+  --ingest-knowledge      Ingest PDFs from knowledge_base/ into vector store
+  --knowledge-stats       Display knowledge base statistics
+  --clear-knowledge       Clear the knowledge base
+  --knowledge-dir PATH    Custom knowledge base directory
+```
+
+## Web UI
+
+A Streamlit-based interface with three main views:
+
+- **Chat**: Ask questions about mortgage regulations (with optional RAG toggle)
+- **Reviews**: Handle pending human review tasks from interrupted workflows
+- **Reports**: View and download generated classification reports
+
+```bash
 streamlit run frontend/app.py
 ```
