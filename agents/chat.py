@@ -568,13 +568,20 @@ class ChatAgent:
         tools = self._tools
         llm_with_tools = self.llm.bind_tools(tools)
         
-        # Guardrail nodes (logic in utils/guardrails.py)
-        from utils.guardrails import create_input_guardrails_node, create_output_guardrails_node
+        from utils.guardrails import (
+            create_input_guardrails_node,
+            create_intent_evaluator_node,
+            create_output_guardrails_node,
+        )
         
         input_guardrails_node = create_input_guardrails_node(
             human_message_class=HumanMessage,
             mask_pii=config.GUARDRAILS_MASK_PII,
             block_on_pii=config.GUARDRAILS_BLOCK_PII,
+        )
+        
+        intent_evaluator_node = create_intent_evaluator_node(
+            human_message_class=HumanMessage,
         )
         
         output_guardrails_node = create_output_guardrails_node(
@@ -597,6 +604,9 @@ class ChatAgent:
             return {"messages": [response]}
         
         def after_input_guardrails(state: ChatState) -> str:
+            return "blocked" if state.input_blocked else "intent_eval"
+        
+        def after_intent_eval(state: ChatState) -> str:
             return "blocked" if state.input_blocked else "agent"
         
         def should_continue(state: ChatState) -> str:
@@ -605,10 +615,11 @@ class ChatAgent:
                 return "tools"
             return "output_guardrails"
         
-        # Build graph: input_guardrails → agent ↔ tools → output_guardrails
+        # Build graph: input_guardrails → intent_eval → agent ↔ tools → output_guardrails
         workflow = StateGraph(ChatState)
         
         workflow.add_node("input_guardrails", input_guardrails_node)
+        workflow.add_node("intent_eval", intent_evaluator_node)
         workflow.add_node("agent", agent_node)
         workflow.add_node("tools", ToolNode(tools))
         workflow.add_node("output_guardrails", output_guardrails_node)
@@ -617,6 +628,11 @@ class ChatAgent:
         workflow.add_conditional_edges(
             "input_guardrails",
             after_input_guardrails,
+            {"blocked": END, "intent_eval": "intent_eval"}
+        )
+        workflow.add_conditional_edges(
+            "intent_eval",
+            after_intent_eval,
             {"blocked": END, "agent": "agent"}
         )
         workflow.add_conditional_edges(
