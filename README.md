@@ -26,8 +26,12 @@ flowchart TB
 
     subgraph chat["Chat Agent (LangGraph)"]
         direction TB
-        user_msg[User Message] --> retrieve[RAG Retrieval]
-        retrieve --> respond[LLM Response]
+        user_msg[User Message] --> input_guard[Input Guardrails]
+        input_guard --> intent[Intent Eval]
+        intent --> agent[ReAct Agent]
+        agent <--> tools[Tools]
+        agent --> output_guard[Output Guardrails]
+        output_guard --> response[Response]
     end
 
     subgraph storage["Persistence Layer"]
@@ -49,7 +53,7 @@ flowchart TB
     classify -.->|cache hit/miss| cache
     workflow -.->|state| checkpoints
     chat -.->|state| checkpoints
-    retrieve -.->|similarity search| chroma
+    tools -.->|RAG search| chroma
     auth -.->|credentials| users
 
     admin_view --> workflow
@@ -68,8 +72,10 @@ flowchart TB
 | Human Review | Node | LangGraph interrupt-based review for uncertain classifications |
 | Report Generator | Node | Produces PDF report summarizing all processed documents |
 | **Chat System** | | |
-| Chat Agent | Agent | LangGraph-based conversational agent with optional RAG |
+| Chat Agent | Agent | LangGraph-based ReAct agent with tools for RAG, property lookup, web search, user memory |
 | RAG Manager | Utility | ChromaDB vector store with HuggingFace embeddings for knowledge retrieval |
+| User Memory | Utility | Persistent user facts (SQLite) + conversation recall (ChromaDB) |
+| Guardrails | Utility | Defense-in-depth: input sanitization, PII detection, intent evaluation, output filtering |
 | **Infrastructure** | | |
 | Auth Layer | Utility | Role-based access control (admin/borrower) with session management |
 | Document Cache | Utility | SQLite cache for LLM results, keyed by content hash |
@@ -110,6 +116,10 @@ LANGFUSE_PUBLIC_KEY=pk-...
 LANGFUSE_SECRET_KEY=sk-...
 LANGFUSE_HOST=https://cloud.langfuse.com
 
+# Optional - External API integrations (tools available when keys present)
+BATCHDATA_API_KEY=...          # Property/address lookup (batchdata.com)
+BRAVE_SEARCH_API_KEY=...       # Web search (brave.com/search/api)
+
 # Optional - OCR settings
 OCR_ENABLED=true
 OCR_MIN_CHARS_PER_PAGE=50
@@ -117,6 +127,12 @@ OCR_MIN_FREE_VRAM_GB=3.0
 
 # Optional - RAG settings
 RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
+
+# Optional - Guardrails (all enabled by default)
+GUARDRAILS_ENABLED=true
+GUARDRAILS_INTENT_CHECK=true   # LLM-based jailbreak detection
+GUARDRAILS_DETECT_PII=true     # Detect PII in input
+GUARDRAILS_MASK_PII=true       # Mask detected PII
 ```
 
 ## Usage
@@ -223,6 +239,49 @@ Options:
   --clear-knowledge       Clear the knowledge base
   --knowledge-dir PATH    Custom knowledge base directory
 ```
+
+### Chat & Memory CLI Options
+
+```bash
+python main.py [CHAT OPTIONS]
+
+Options:
+  --chat-stats            Display chat session statistics
+  --clear-chat-history    Clear all chat history
+  --memory-stats          Display user memory statistics
+  --clear-memory          Clear user facts and conversation memory
+  --user USERNAME         Scope memory operations to specific user
+```
+
+## Chat Agent Tools
+
+The chat agent uses a ReAct architecture with dynamically available tools:
+
+| Tool | Availability | Description |
+|------|--------------|-------------|
+| `search_knowledge_base` | When RAG ingested | Semantic search over mortgage regulations |
+| `recall_past_conversations` | Always | Search previous conversations for context |
+| `get_my_stored_facts` | Always | Retrieve remembered user facts |
+| `get_my_reports` | Always | List user's document reports |
+| `get_my_documents` | Always | List user's processed documents |
+| `prepare_report_download` | Always | Prepare a report for download |
+| `verify_property_address` | When `BATCHDATA_API_KEY` set | USPS address verification |
+| `get_property_details` | When `BATCHDATA_API_KEY` set | Property details, valuation, history |
+| `search_properties` | When `BATCHDATA_API_KEY` set | Search properties by criteria |
+| `geocode_address` | When `BATCHDATA_API_KEY` set | Convert address to coordinates |
+| `web_search` | When `BRAVE_SEARCH_API_KEY` set | Web search for current information |
+
+## Guardrails
+
+Defense-in-depth security for the chat agent:
+
+| Layer | Type | Description |
+|-------|------|-------------|
+| **Layer 1: Input** | Deterministic | Sanitization, PII detection/masking, domain classification |
+| **Layer 2: Intent** | LLM-based | Detects jailbreaks, prompt injection, social engineering |
+| **Layer 3: Output** | Deterministic | System prompt leak detection, PII filtering |
+
+Guardrails run as LangGraph nodes, visible in traces. Configure via environment variables (see Setup).
 
 ## Web UI
 
