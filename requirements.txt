@@ -1,0 +1,25 @@
+# LangGraph orchestration
+langgraph>=0.2.0,<1.0.0
+
+# LangChain (required for LangGraph and LangFuse callback integration)
+langchain>=0.3.0,<1.0.0
+langchain-openai>=0.2.0,<1.0.0
+
+# PDF processing
+pdfplumber>=0.11.0,<1.0.0
+
+# OCR for scanned PDFs (optional, install with: pip install "python-doctr[torch]")
+python-doctr[torch]>=0.9.0,<1.0.0
+
+# PDF report generation
+reportlab>=4.2.0,<5.0.0
+
+# Image processing (optional, for generating test scanned PDFs)
+Pillow>=10.0.0,<12.0.0
+
+# LLM observability (callback handler for LangGraph tracing)
+langfuse[langchain]>=2.50.0,<3.0.0
+
+# Configuration and data models
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.0.0,<3.0.0
