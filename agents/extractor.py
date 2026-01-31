@@ -1,14 +1,18 @@
 # This project was developed with assistance from AI tools.
+"""
+PDF Extractor agent for document content extraction.
+"""
 from pathlib import Path
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 
 from .base import BaseAgent
 from config import config as app_config
-from models import ExtractedDocument, WorkflowState, WorkflowError, ExtractionResult
+from models import ExtractedDocument, ExtractionResult, WorkflowError, WorkflowState
+from prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT
 from utils.document_cache import document_cache
 from utils.pdf import extract_text_from_pdf
-from prompts import EXTRACTION_SYSTEM_PROMPT, EXTRACTION_USER_PROMPT
 
 
 class PDFExtractorAgent(BaseAgent):

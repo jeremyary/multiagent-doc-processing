@@ -103,6 +103,22 @@ class Config:
     BRAVE_SEARCH_BASE_URL: str = os.getenv("BRAVE_SEARCH_BASE_URL", "https://api.search.brave.com/res/v1")
     
     # ==========================================================================
+    # Guardrails Settings (Defense in Depth)
+    # ==========================================================================
+    # Enable/disable guardrails (all disabled = pass-through mode)
+    GUARDRAILS_ENABLED: bool = os.getenv("GUARDRAILS_ENABLED", "true").lower() in ("true", "1", "yes")
+    
+    # Input guardrails
+    GUARDRAILS_SANITIZE_INPUT: bool = os.getenv("GUARDRAILS_SANITIZE_INPUT", "true").lower() in ("true", "1", "yes")
+    GUARDRAILS_DETECT_PII: bool = os.getenv("GUARDRAILS_DETECT_PII", "true").lower() in ("true", "1", "yes")
+    GUARDRAILS_MASK_PII: bool = os.getenv("GUARDRAILS_MASK_PII", "true").lower() in ("true", "1", "yes")
+    GUARDRAILS_BLOCK_PII: bool = os.getenv("GUARDRAILS_BLOCK_PII", "false").lower() in ("true", "1", "yes")
+    
+    # Output guardrails
+    GUARDRAILS_CHECK_OUTPUT: bool = os.getenv("GUARDRAILS_CHECK_OUTPUT", "true").lower() in ("true", "1", "yes")
+    GUARDRAILS_MASK_OUTPUT_PII: bool = os.getenv("GUARDRAILS_MASK_OUTPUT_PII", "true").lower() in ("true", "1", "yes")
+    
+    # ==========================================================================
     # Document Categories (Mortgage Loan Process)
     # ==========================================================================
     DOCUMENT_CATEGORIES: list[str] = [

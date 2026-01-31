@@ -1,13 +1,18 @@
 # This project was developed with assistance from AI tools.
+"""
+SQLite-based cache for document extraction and classification results.
+
+Uses SHA256 content hashes for O(1) lookups.
+"""
 import hashlib
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
 
-from models import ExtractedDocument, ClassifiedDocument
 from config import config
+from models import ClassifiedDocument, ExtractedDocument
 
 
 class DocumentCache:

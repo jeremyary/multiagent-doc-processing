@@ -1,16 +1,26 @@
 # This project was developed with assistance from AI tools.
-from pathlib import Path
+"""
+PDF report generation for document classification results.
+"""
 from datetime import datetime
+from pathlib import Path
+
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
 from reportlab.lib.pagesizes import letter
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
 )
-from reportlab.lib.enums import TA_CENTER
-from models import ClassifiedDocument, WorkflowState, WorkflowError
+
 from config import config
+from models import ClassifiedDocument, WorkflowError, WorkflowState
 
 
 def _get_styles():

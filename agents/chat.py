@@ -8,24 +8,22 @@ and real estate knowledge. Features:
 - Persistent user facts (loan preferences, status, etc.)
 - Semantic search over past conversations for recall
 """
+import logging
 import os
 import sqlite3
-import logging
 from typing import Annotated
-from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, BaseMessage
+
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langgraph.graph import StateGraph, END, START
-from langgraph.graph.message import add_messages
+from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from pydantic import BaseModel, Field
 
 from config import config
-from prompts import (
-    CHAT_AGENT_WITH_TOOLS_PROMPT,
-    USER_CONTEXT_TEMPLATE,
-)
+from prompts import CHAT_AGENT_WITH_TOOLS_PROMPT, USER_CONTEXT_TEMPLATE
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +31,12 @@ logger = logging.getLogger(__name__)
 class ChatState(BaseModel):
     """State for the chat agent."""
     messages: Annotated[list[BaseMessage], add_messages] = Field(default_factory=list)
+    
+    # Guardrail state
+    input_blocked: bool = False
+    input_block_reason: str | None = None
+    output_blocked: bool = False
+    guardrail_warnings: list[str] = Field(default_factory=list)
 
 
 class ChatAgent:
@@ -148,7 +152,6 @@ class ChatAgent:
         
         tools = []
         
-        # Tool 1: Search knowledge base
         @tool(description=TOOL_SEARCH_KNOWLEDGE_BASE)
         def search_knowledge_base(query: str) -> str:
             rag = self.rag_manager
@@ -169,7 +172,6 @@ class ChatAgent:
         
         tools.append(search_knowledge_base)
         
-        # Tool 2: Recall past conversations
         @tool(description=TOOL_RECALL_CONVERSATIONS)
         def recall_past_conversations(query: str) -> str:
             memory = self.conversation_memory
@@ -194,7 +196,6 @@ class ChatAgent:
         
         tools.append(recall_past_conversations)
         
-        # Tool 3: Get stored user facts
         @tool(description=TOOL_GET_USER_FACTS)
         def get_my_stored_facts() -> str:
             user_id = self._current_user_id
@@ -221,7 +222,6 @@ class ChatAgent:
         
         tools.append(get_my_stored_facts)
         
-        # Tool 4: Get user's reports (with classification details)
         @tool(description=TOOL_GET_MY_REPORTS)
         def get_my_reports() -> str:
             user_id = self._current_user_id
@@ -269,7 +269,6 @@ class ChatAgent:
         
         tools.append(get_my_reports)
         
-        # Tool 5: Get user's processed documents
         @tool(description=TOOL_GET_MY_DOCUMENTS)
         def get_my_documents() -> str:
             user_id = self._current_user_id
@@ -353,7 +352,6 @@ class ChatAgent:
         
         tools.append(get_my_documents)
         
-        # Tool 6: Prepare report download
         @tool(description=TOOL_PREPARE_DOWNLOAD)
         def prepare_report_download(report_id: int | None = None, confirmed: bool = False) -> str:
             user_id = self._current_user_id
@@ -415,9 +413,7 @@ class ChatAgent:
         
         tools.append(prepare_report_download)
         
-        # =================================================================
         # Property Data Tools (only if BatchData API key is configured)
-        # =================================================================
         from utils.batchdata import is_available as batchdata_available
         
         if batchdata_available():
@@ -429,7 +425,6 @@ class ChatAgent:
             )
             from utils.batchdata import get_batchdata_client
             
-            # Tool 7: Verify address
             @tool(description=TOOL_VERIFY_ADDRESS)
             def verify_property_address(street: str, city: str, state: str, zip_code: str) -> str:
                 try:
@@ -444,7 +439,6 @@ class ChatAgent:
             
             tools.append(verify_property_address)
             
-            # Tool 8: Property lookup
             @tool(description=TOOL_PROPERTY_LOOKUP)
             def get_property_details(street: str, city: str, state: str, zip_code: str | None = None) -> str:
                 try:
@@ -459,7 +453,6 @@ class ChatAgent:
             
             tools.append(get_property_details)
             
-            # Tool 9: Property search
             @tool(description=TOOL_SEARCH_PROPERTIES)
             def search_properties(
                 query: str | None = None,
@@ -503,7 +496,6 @@ class ChatAgent:
             
             tools.append(search_properties)
             
-            # Tool 10: Geocode address
             @tool(description=TOOL_GEOCODE_ADDRESS)
             def geocode_address(address: str) -> str:
                 try:
@@ -522,16 +514,13 @@ class ChatAgent:
         else:
             logger.info("BatchData API key not configured - property tools disabled")
         
-        # =================================================================
         # Web Search Tools (only if Brave Search API key is configured)
-        # =================================================================
         from utils.brave_search import is_available as brave_available
         
         if brave_available():
             from prompts import TOOL_WEB_SEARCH
             from utils.brave_search import get_brave_search_client
             
-            # Tool 11: Web search
             @tool(description=TOOL_WEB_SEARCH)
             def web_search(query: str, count: int = 5, freshness: str | None = None) -> str:
                 try:
@@ -575,50 +564,68 @@ class ChatAgent:
         return base_prompt
     
     def _build_graph(self) -> StateGraph:
-        """Build the chat graph with tool-calling capabilities."""
+        """Build the chat graph with guardrails and tool-calling capabilities."""
         tools = self._tools
-        
-        # Bind tools to LLM
         llm_with_tools = self.llm.bind_tools(tools)
         
+        # Guardrail nodes (logic in utils/guardrails.py)
+        from utils.guardrails import create_input_guardrails_node, create_output_guardrails_node
+        
+        input_guardrails_node = create_input_guardrails_node(
+            human_message_class=HumanMessage,
+            mask_pii=config.GUARDRAILS_MASK_PII,
+            block_on_pii=config.GUARDRAILS_BLOCK_PII,
+        )
+        
+        output_guardrails_node = create_output_guardrails_node(
+            ai_message_class=AIMessage,
+            get_system_prompt=lambda: self._build_system_prompt(self._current_user_id or "anonymous"),
+            mask_output_pii=config.GUARDRAILS_MASK_OUTPUT_PII,
+        )
+        
         def agent_node(state: ChatState) -> dict:
-            """The agent node that processes messages and may call tools."""
+            """Process messages and may call tools."""
             messages = list(state.messages)
-            
-            # Build dynamic system prompt with user context
             system_prompt = self._build_system_prompt(self._current_user_id or "anonymous")
             
-            # Add/update system message
             if not messages or not isinstance(messages[0], SystemMessage):
                 messages = [SystemMessage(content=system_prompt)] + messages
             else:
-                # Update existing system message with current user context
                 messages[0] = SystemMessage(content=system_prompt)
             
             response = llm_with_tools.invoke(messages)
             return {"messages": [response]}
         
+        def after_input_guardrails(state: ChatState) -> str:
+            return "blocked" if state.input_blocked else "agent"
+        
         def should_continue(state: ChatState) -> str:
-            """Determine if the agent should call tools or finish."""
             last_message = state.messages[-1]
-            
             if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
                 return "tools"
-            return "end"
+            return "output_guardrails"
         
-        # Build the graph
+        # Build graph: input_guardrails → agent ↔ tools → output_guardrails
         workflow = StateGraph(ChatState)
         
+        workflow.add_node("input_guardrails", input_guardrails_node)
         workflow.add_node("agent", agent_node)
         workflow.add_node("tools", ToolNode(tools))
+        workflow.add_node("output_guardrails", output_guardrails_node)
         
-        workflow.add_edge(START, "agent")
+        workflow.add_edge(START, "input_guardrails")
+        workflow.add_conditional_edges(
+            "input_guardrails",
+            after_input_guardrails,
+            {"blocked": END, "agent": "agent"}
+        )
         workflow.add_conditional_edges(
             "agent",
             should_continue,
-            {"tools": "tools", "end": END}
+            {"tools": "tools", "output_guardrails": "output_guardrails"}
         )
         workflow.add_edge("tools", "agent")
+        workflow.add_edge("output_guardrails", END)
         
         return workflow
     
@@ -678,9 +685,10 @@ class ChatAgent:
         """
         Send a message and get a response.
         
-        The agent will automatically decide whether to:
-        - Search the knowledge base for regulations
-        - Recall past conversations
+        The LangGraph workflow handles:
+        - Layer 1: Input guardrails (sanitization, PII masking)
+        - Agent processing with tool calls
+        - Layer 3: Output guardrails (leak detection, PII masking)
         
         After responding, it stores the exchange and extracts any user facts.
         
@@ -697,7 +705,7 @@ class ChatAgent:
         
         invoke_config = {"configurable": {"thread_id": thread_id}}
         
-        # Add LangFuse callback if enabled
+        # Add LangFuse callback if enabled (traces show guardrail nodes)
         langfuse_enabled = bool(os.getenv('LANGFUSE_SECRET_KEY'))
         if langfuse_enabled:
             try:
@@ -715,15 +723,25 @@ class ChatAgent:
                 logger.warning("LangFuse enabled but langfuse package not available")
         
         try:
+            # Invoke the graph - guardrails are handled as nodes
             result = self.compiled_graph.invoke(
                 {"messages": [HumanMessage(content=message)]},
                 invoke_config
             )
             
+            # Check if input was blocked by guardrails
+            if result.get("input_blocked"):
+                logger.info(f"Request blocked by input guardrails: {result.get('input_block_reason')}")
+                return "I'm not able to process that request. Please try rephrasing."
+            
+            # Log any guardrail warnings
+            for warning in result.get("guardrail_warnings", []):
+                logger.info(f"Guardrail: {warning}")
+            
             # Get the last AI message (not a tool message)
             response_text = None
             for msg in reversed(result["messages"]):
-                if isinstance(msg, AIMessage) and not msg.tool_calls:
+                if isinstance(msg, AIMessage) and not getattr(msg, 'tool_calls', None):
                     response_text = msg.content
                     break
             
@@ -734,7 +752,7 @@ class ChatAgent:
             self._store_exchange_and_extract_facts(
                 user_id=self._current_user_id,
                 thread_id=thread_id,
-                user_message=message,
+                user_message=message,  # Store original message for memory
                 assistant_response=response_text
             )
             

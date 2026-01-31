@@ -1,12 +1,21 @@
 # This project was developed with assistance from AI tools.
+"""
+Document Classifier agent for mortgage document categorization.
+"""
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 
 from .base import BaseAgent
-from models import ExtractedDocument, ClassifiedDocument, ClassificationResult, WorkflowState, WorkflowError
 from config import config as app_config
-from utils.document_cache import document_cache
+from models import (
+    ClassificationResult,
+    ClassifiedDocument,
+    ExtractedDocument,
+    WorkflowError,
+    WorkflowState,
+)
 from prompts import CLASSIFICATION_SYSTEM_PROMPT, CLASSIFICATION_USER_PROMPT
+from utils.document_cache import document_cache
 
 
 class ClassifierAgent(BaseAgent):

@@ -1,7 +1,12 @@
 # This project was developed with assistance from AI tools.
+"""
+Base agent class providing shared LLM configuration.
+"""
 from abc import ABC, abstractmethod
-from langchain_openai import ChatOpenAI
+
 from langchain_core.runnables import RunnableConfig
+from langchain_openai import ChatOpenAI
+
 from config import config
 from models import WorkflowState
 

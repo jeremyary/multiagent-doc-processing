@@ -1,18 +1,25 @@
 # This project was developed with assistance from AI tools.
+"""
+LangGraph-based orchestrator for the document processing workflow.
+
+Manages the multi-agent workflow: extraction -> classification -> report generation.
+Supports checkpointing, human-in-the-loop review, and observability via LangFuse.
+"""
 import os
 import sqlite3
 from datetime import datetime
-from typing import Literal, Any, Callable
-from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.types import RetryPolicy, Command
-from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
+from typing import Any, Callable, Literal
 
-from models import WorkflowState, WorkflowError
-from agents import PDFExtractorAgent, ClassifierAgent
-from utils.report_generator import generate_report_from_state
-from utils.human_review import review_unknown_documents
+from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.types import Command, RetryPolicy
+
+from agents import ClassifierAgent, PDFExtractorAgent
 from config import config
+from models import WorkflowError, WorkflowState
+from utils.human_review import review_unknown_documents
+from utils.report_generator import generate_report_from_state
 
 
 # Define retry policy for LLM-calling nodes
