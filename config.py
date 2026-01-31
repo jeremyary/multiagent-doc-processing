@@ -118,6 +118,9 @@ class Config:
     GUARDRAILS_CHECK_OUTPUT: bool = os.getenv("GUARDRAILS_CHECK_OUTPUT", "true").lower() in ("true", "1", "yes")
     GUARDRAILS_MASK_OUTPUT_PII: bool = os.getenv("GUARDRAILS_MASK_OUTPUT_PII", "true").lower() in ("true", "1", "yes")
     
+    # Intent evaluation (Layer 2 - LLM-based guard)
+    GUARDRAILS_INTENT_CHECK: bool = os.getenv("GUARDRAILS_INTENT_CHECK", "true").lower() in ("true", "1", "yes")
+    
     # ==========================================================================
     # Document Categories (Mortgage Loan Process)
     # ==========================================================================
