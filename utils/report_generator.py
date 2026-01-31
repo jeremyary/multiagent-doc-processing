@@ -155,7 +155,9 @@ def _create_document_details(classified_docs: list[ClassifiedDocument], styles) 
 def generate_report(
     classified_docs: list[ClassifiedDocument],
     classification_summary: dict,
-    output_path: Path
+    output_path: Path,
+    owner_id: str | None = None,
+    thread_id: str | None = None
 ) -> str:
     """
     Generate a PDF report from classified documents.
@@ -164,14 +166,18 @@ def generate_report(
         classified_docs: List of classified documents
         classification_summary: Summary dict with category counts
         output_path: Directory to save the report
+        owner_id: Optional owner identifier for access control
+        thread_id: Optional thread ID for traceability
     
     Returns:
         Path to the generated report file
     """
+    from utils.report_store import get_report_store
+    
     styles = _get_styles()
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_filename = f"document_analysis_report_{timestamp}.pdf"
+    report_filename = f"report_{timestamp}.pdf"
     report_path = output_path / report_filename
     
     doc = SimpleDocTemplate(
@@ -218,6 +224,32 @@ def generate_report(
     elements.extend(_create_document_details(classified_docs, styles))
     doc.build(elements)
     
+    # Build detailed classification summary for storage
+    detailed_summary = {}
+    for doc_item in classified_docs:
+        cat = doc_item.category
+        if cat not in detailed_summary:
+            detailed_summary[cat] = {
+                "count": 0,
+                "documents": []
+            }
+        detailed_summary[cat]["count"] += 1
+        detailed_summary[cat]["documents"].append({
+            "name": doc_item.document.file_name,
+            "confidence": doc_item.confidence,
+            "human_reviewed": doc_item.human_reviewed,
+        })
+    
+    # Register report metadata for access control
+    store = get_report_store()
+    store.register_report(
+        filename=report_filename,
+        owner_id=owner_id,
+        thread_id=thread_id,
+        document_count=len(classified_docs),
+        classification_summary=detailed_summary
+    )
+    
     return str(report_path)
 
 
@@ -238,6 +270,7 @@ def generate_report_from_state(state: WorkflowState) -> dict:
     
     classified_docs = state.get("classified_documents", [])
     classification_summary = state.get("classification_summary", {})
+    owner_id = state.get("owner_id")
     
     if not classified_docs:
         print("[Report Generator] No classified documents to report on")
@@ -254,7 +287,8 @@ def generate_report_from_state(state: WorkflowState) -> dict:
         report_path = generate_report(
             classified_docs,
             classification_summary,
-            output_dir
+            output_dir,
+            owner_id=owner_id
         )
         
         print(f"[Report Generator] Report generated: {report_path}")

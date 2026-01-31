@@ -48,7 +48,7 @@ class WorkflowOrchestrator:
         self.checkpointing = checkpointing
         
         if checkpointing:
-            self._db_conn = sqlite3.connect(config.CHECKPOINT_DB_PATH, check_same_thread=False)
+            self._db_conn = sqlite3.connect(config.APP_DATA_DB_PATH, check_same_thread=False)
             self.checkpointer = SqliteSaver(self._db_conn)
             self.compiled_graph = self.graph.compile(checkpointer=self.checkpointer)
         else:
@@ -182,7 +182,7 @@ class WorkflowOrchestrator:
         pending = []
         try:
             cursor = self._db_conn.execute(
-                "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE 'doc-%' OR thread_id LIKE 'ui-%'"
+                "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE '%doc-%' OR thread_id LIKE '%ui-%'"
             )
             thread_ids = [row[0] for row in cursor.fetchall()]
             
@@ -237,12 +237,21 @@ class WorkflowOrchestrator:
         """
         invoke_config = {"configurable": {"thread_id": thread_id}}
         
+        # Extract owner_id from thread_id pattern: "{user}-ui-{timestamp}"
+        owner_id = None
+        if "-ui-" in thread_id:
+            owner_id = thread_id.split("-ui-")[0]
+        elif "-doc-" in thread_id:
+            owner_id = thread_id.split("-doc-")[0] if "-" in thread_id.split("-doc-")[0] else None
+        
         langfuse_enabled = bool(os.getenv('LANGFUSE_SECRET_KEY'))
         if langfuse_enabled:
             langfuse_handler = LangfuseCallbackHandler(
+                session_id=owner_id,
                 metadata={
                     "workflow": "document_orchestrator",
                     "thread_id": thread_id,
+                    "owner_id": owner_id,
                     "resumed_from_ui": True,
                 }
             )
@@ -267,7 +276,8 @@ class WorkflowOrchestrator:
         session_id: str | None = None,
         use_cache: bool = True,
         doc_limit: int | None = None,
-        interrupt_handler: Callable | None = None
+        interrupt_handler: Callable | None = None,
+        owner_id: str | None = None
     ) -> tuple[WorkflowState, str | None]:
         """
         Execute the full workflow with interrupt handling.
@@ -282,6 +292,7 @@ class WorkflowOrchestrator:
             use_cache: Whether to use document cache for LLM results
             doc_limit: Optional limit on number of documents to process
             interrupt_handler: Callback to handle interrupts (receives interrupt data, returns resume data)
+            owner_id: User who owns this workflow (for report filtering)
         
         Returns:
             Tuple of (final workflow state, thread_id used)
@@ -297,6 +308,7 @@ class WorkflowOrchestrator:
         initial_state: WorkflowState = {
             "input_directory": input_directory,
             "doc_limit": doc_limit,
+            "owner_id": owner_id,
             "pdf_files": [],
             "extracted_documents": [],
             "extraction_errors": [],
@@ -316,11 +328,12 @@ class WorkflowOrchestrator:
         
         if langfuse_enabled:
             langfuse_handler = LangfuseCallbackHandler(
-                session_id=session_id,
+                session_id=session_id or owner_id,  # Use owner_id as fallback
                 metadata={
                     "workflow": "document_orchestrator",
                     "use_cache": use_cache,
                     "thread_id": thread_id,
+                    "owner_id": owner_id,
                 }
             )
             invoke_config["callbacks"] = [langfuse_handler]

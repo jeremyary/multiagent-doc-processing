@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from agents import get_chat_agent
 from orchestrator import create_orchestrator
 from config import config
+from frontend.auth import (
+    render_login, render_logout, render_user_info,
+    get_current_user, get_user_thread_prefix, get_user_upload_dir
+)
 
 # Page configuration
 st.set_page_config(
@@ -121,8 +125,11 @@ def get_orchestrator(force_new: bool = False):
 
 def init_session_state():
     """Initialize session state variables."""
+    user = get_current_user()
+    user_prefix = get_user_thread_prefix()
+    
     if "chat_thread_id" not in st.session_state:
-        st.session_state.chat_thread_id = f"chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        st.session_state.chat_thread_id = f"{user_prefix}chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
     
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -140,28 +147,32 @@ def init_session_state():
         st.session_state.uploaded_files = []
     
     if "active_review" not in st.session_state:
-        st.session_state.active_review = None  # thread_id of review being performed
+        st.session_state.active_review = None
     
     if "review_decisions" not in st.session_state:
-        st.session_state.review_decisions = {}  # {filename: category}
+        st.session_state.review_decisions = {}
     
+    # Default view mode - borrowers can't access reviews
     if "view_mode" not in st.session_state:
-        st.session_state.view_mode = "chat"  # "chat", "review", or "reports"
+        st.session_state.view_mode = "chat"
+    
+    # Redirect borrowers away from review tab
+    if user and not user.can_review_documents() and st.session_state.view_mode == "review":
+        st.session_state.view_mode = "chat"
     
     if "upload_dir" not in st.session_state:
-        st.session_state.upload_dir = None  # Directory for current upload batch
+        st.session_state.upload_dir = None
     
-    if "use_rag" not in st.session_state:
-        st.session_state.use_rag = True  # Enable RAG by default
     
     if "selected_report" not in st.session_state:
-        st.session_state.selected_report = None  # Currently selected report for viewing
+        st.session_state.selected_report = None
 
 
 def create_upload_directory() -> Path:
-    """Create a unique directory for this upload batch."""
+    """Create a unique directory for this upload batch, scoped to user."""
+    user_dir = get_user_upload_dir()
     timestamp = datetime.now().strftime('%Y%m%d-%H%M%S')
-    upload_dir = Path("uploads") / f"batch-{timestamp}"
+    upload_dir = Path("uploads") / user_dir / f"batch-{timestamp}"
     upload_dir.mkdir(parents=True, exist_ok=True)
     return upload_dir
 
@@ -186,59 +197,141 @@ def run_workflow(upload_dir: Path) -> dict:
         Workflow result state
     """
     orchestrator = get_orchestrator()
-    thread_id = f"ui-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    user = get_current_user()
+    user_prefix = get_user_thread_prefix()
+    thread_id = f"{user_prefix}ui-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    owner_id = user.username if user else None
+    
+    # Store thread_id so we can filter reports later
+    st.session_state.current_workflow_thread = thread_id
     
     result, _ = orchestrator.run(
         input_directory=str(upload_dir),
         thread_id=thread_id,
+        session_id=owner_id,  # Ties to same LangFuse session as chat
         use_cache=True,
-        interrupt_handler=None
+        interrupt_handler=None,
+        owner_id=owner_id
     )
     
     return result
 
 
-def list_reports() -> list[dict]:
-    """List all available reports from the output directory."""
-    reports = []
+def list_reports(filter_by_user: bool = True) -> list[dict]:
+    """
+    List available reports using the report store for access control.
+    
+    Args:
+        filter_by_user: If True, borrowers only see their own reports.
+                        Admins see all reports regardless.
+    """
+    from utils.report_store import get_report_store
+    
     output_dir = config.OUTPUT_REPORT_DIR
-    
     if not output_dir.exists():
-        return reports
+        return []
     
-    for pdf_file in sorted(output_dir.glob("*.pdf"), key=lambda p: p.stat().st_mtime, reverse=True):
-        stat = pdf_file.stat()
-        reports.append({
-            "name": pdf_file.name,
-            "path": pdf_file,
-            "size_kb": stat.st_size / 1024,
-            "modified": datetime.fromtimestamp(stat.st_mtime),
-        })
+    user = get_current_user()
+    can_see_all = user and user.can_view_all_reports()
+    username = user.username if user else None
     
+    # Sync store with filesystem (removes orphaned entries)
+    store = get_report_store()
+    store.sync_with_filesystem(output_dir)
+    
+    # Get reports from store with proper filtering
+    if filter_by_user and not can_see_all and username:
+        db_reports = store.get_reports(owner_id=username)
+    else:
+        db_reports = store.get_reports()
+    
+    # Build list with file info
+    reports = []
+    for report in db_reports:
+        file_path = output_dir / report["filename"]
+        if file_path.exists():
+            stat = file_path.stat()
+            # Create display name from metadata
+            owner = report.get("owner_id") or "cli"
+            doc_count = report.get("document_count", 0)
+            created = report.get("created_at", "")[:10]
+            display_name = f"{created} - {doc_count} docs ({owner})"
+            
+            reports.append({
+                "name": report["filename"],
+                "display_name": display_name,
+                "path": file_path,
+                "size_kb": stat.st_size / 1024,
+                "modified": datetime.fromtimestamp(stat.st_mtime),
+                "owner_id": report.get("owner_id"),
+                "document_count": doc_count,
+            })
+    
+    # Also include legacy files not in the store (for backward compatibility)
+    stored_filenames = {r["filename"] for r in db_reports}
+    for pdf_file in output_dir.glob("*.pdf"):
+        if pdf_file.name not in stored_filenames:
+            # Legacy file - show to admins or if no user filter
+            if can_see_all or not filter_by_user:
+                stat = pdf_file.stat()
+                reports.append({
+                    "name": pdf_file.name,
+                    "display_name": pdf_file.stem,
+                    "path": pdf_file,
+                    "size_kb": stat.st_size / 1024,
+                    "modified": datetime.fromtimestamp(stat.st_mtime),
+                    "owner_id": None,
+                    "document_count": 0,
+                })
+    
+    # Sort by modification time
+    reports.sort(key=lambda r: r["modified"], reverse=True)
     return reports
 
 
 def render_sidebar():
     """Render the sidebar with session management and document processing."""
+    user = get_current_user()
+    
     with st.sidebar:
-        # View mode toggle - 3 tabs
-        col1, col2, col3 = st.columns(3)
+        # User info and logout
+        render_user_info()
+        render_logout()
+        st.divider()
+        
+        # View mode toggle - tabs depend on user role
+        can_review = user and user.can_review_documents()
+        
+        if can_review:
+            # Admin: show all 3 tabs
+            col1, col2, col3 = st.columns(3)
+        else:
+            # Borrower: only Chat and Reports
+            col1, col2 = st.columns(2)
+            col3 = None
+        
         with col1:
             if st.button("Chat", use_container_width=True, 
                         type="primary" if st.session_state.view_mode == "chat" else "secondary"):
                 st.session_state.view_mode = "chat"
                 st.rerun()
-        with col2:
-            # Check for pending reviews
-            orchestrator = get_orchestrator(force_new=True)
-            pending_count = len(orchestrator.list_pending_reviews())
-            btn_label = f"Reviews ({pending_count})" if pending_count > 0 else "Reviews"
-            if st.button(btn_label, use_container_width=True,
-                        type="primary" if st.session_state.view_mode == "review" else "secondary"):
-                st.session_state.view_mode = "review"
-                st.rerun()
-        with col3:
-            report_count = len(list_reports())
+        
+        if can_review:
+            with col2:
+                orchestrator = get_orchestrator(force_new=True)
+                pending_count = len(orchestrator.list_pending_reviews())
+                btn_label = f"Reviews ({pending_count})" if pending_count > 0 else "Reviews"
+                if st.button(btn_label, use_container_width=True,
+                            type="primary" if st.session_state.view_mode == "review" else "secondary"):
+                    st.session_state.view_mode = "review"
+                    st.rerun()
+            reports_col = col3
+        else:
+            reports_col = col2
+        
+        with reports_col:
+            reports = list_reports()
+            report_count = len(reports)
             btn_label = f"Reports ({report_count})" if report_count > 0 else "Reports"
             if st.button(btn_label, use_container_width=True,
                         type="primary" if st.session_state.view_mode == "reports" else "secondary"):
@@ -265,12 +358,19 @@ def render_chat_sidebar():
     )
     
     if st.button("New Chat Session", use_container_width=True):
-        st.session_state.chat_thread_id = f"chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        user_prefix = get_user_thread_prefix()
+        st.session_state.chat_thread_id = f"{user_prefix}chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
         st.session_state.messages = []
         st.rerun()
     
     with st.expander("Previous Sessions", expanded=False):
-        sessions = st.session_state.chat_agent.list_sessions()
+        user = get_current_user()
+        # Admins see all sessions, borrowers only see their own
+        if user and user.is_admin:
+            sessions = st.session_state.chat_agent.list_sessions(user_prefix=None)
+        else:
+            user_prefix = get_user_thread_prefix()
+            sessions = st.session_state.chat_agent.list_sessions(user_prefix=user_prefix)
         if sessions:
             for session_id in sessions[-10:]:
                 if session_id != st.session_state.chat_thread_id:
@@ -281,27 +381,6 @@ def render_chat_sidebar():
                         st.rerun()
         else:
             st.caption("No previous sessions")
-    
-    st.divider()
-    
-    # RAG Knowledge Base Section
-    st.markdown("### Knowledge Base")
-    
-    # RAG toggle
-    use_rag = st.toggle(
-        "Use RAG",
-        value=st.session_state.use_rag,
-        help="Enable retrieval from mortgage regulations knowledge base"
-    )
-    if use_rag != st.session_state.use_rag:
-        st.session_state.use_rag = use_rag
-    
-    # Show RAG status
-    if st.session_state.chat_agent.rag_has_documents():
-        st.caption("Knowledge base: Active")
-    else:
-        st.caption("Knowledge base: Empty")
-        st.info("Run `python main.py --ingest-knowledge` to populate")
     
     st.divider()
     
@@ -379,14 +458,14 @@ def render_chat_sidebar():
                 st.success(f"Processed {docs_processed} documents")
                 
                 if report_path and Path(report_path).exists():
-                    with open(report_path, "rb") as f:
-                        st.download_button(
-                            label="Download Report",
-                            data=f,
-                            file_name=Path(report_path).name,
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
+                    pdf_bytes = Path(report_path).read_bytes()
+                    st.download_button(
+                        label="Download Report",
+                        data=pdf_bytes,
+                        file_name=Path(report_path).name,
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
                 
                 summary = result.get("classification_summary", {})
                 if summary:
@@ -434,11 +513,6 @@ def render_chat_sidebar():
                 st.session_state.uploaded_files = []
                 st.session_state.upload_dir = None
                 st.rerun()
-    
-    st.divider()
-    st.markdown("### System Info")
-    st.caption(f"Model: {config.OPENAI_MODEL}")
-    st.caption(f"Input: {config.INPUT_PDF_DIR}")
 
 
 def render_review_sidebar():
@@ -465,10 +539,6 @@ def render_review_sidebar():
             st.session_state.active_review = thread_id
             st.session_state.review_decisions = {}
             st.rerun()
-    
-    st.divider()
-    st.markdown("### System Info")
-    st.caption(f"Model: {config.OPENAI_MODEL}")
 
 
 def render_reports_sidebar():
@@ -485,19 +555,13 @@ def render_reports_sidebar():
         is_selected = st.session_state.get("selected_report") == report["name"]
         btn_type = "primary" if is_selected else "secondary"
         
-        # Format file size
-        size_str = f"{report['size_kb']:.0f} KB" if report['size_kb'] < 1024 else f"{report['size_kb']/1024:.1f} MB"
+        # Use display name for cleaner UI
+        display = report.get("display_name", report["name"])
         
-        if st.button(f"{report['name']}", key=f"report_{report['name']}", 
+        if st.button(display, key=f"report_{report['name']}", 
                     use_container_width=True, type=btn_type):
             st.session_state.selected_report = report["name"]
             st.rerun()
-        
-        st.caption(f"{report['modified'].strftime('%Y-%m-%d %H:%M')} | {size_str}")
-    
-    st.divider()
-    st.markdown("### System Info")
-    st.caption(f"Output: {config.OUTPUT_REPORT_DIR}")
 
 
 def render_chat():
@@ -508,9 +572,23 @@ def render_chat():
         unsafe_allow_html=True
     )
     
-    for message in st.session_state.messages:
+    for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
+            
+            # Render download button if message has one attached
+            if message["role"] == "assistant" and "download" in message:
+                download = message["download"]
+                filepath = Path(download["filepath"])
+                if filepath.exists():
+                    st.download_button(
+                        label=f"Download {download['filename']}",
+                        data=filepath.read_bytes(),
+                        file_name=download["filename"],
+                        mime="application/pdf",
+                        key=f"history_download_{idx}",
+                        type="primary",
+                    )
     
     if prompt := st.chat_input("Ask about mortgage documents..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -521,12 +599,34 @@ def render_chat():
             with st.spinner("Thinking..."):
                 response = st.session_state.chat_agent.chat(
                     message=prompt,
-                    thread_id=st.session_state.chat_thread_id,
-                    use_rag=st.session_state.use_rag
+                    thread_id=st.session_state.chat_thread_id
                 )
             st.markdown(response)
-        
-        st.session_state.messages.append({"role": "assistant", "content": response})
+            
+            # Check for pending download triggered by the agent
+            pending_download = st.session_state.chat_agent.get_pending_download()
+            if pending_download:
+                filepath = Path(pending_download["filepath"])
+                if filepath.exists():
+                    st.download_button(
+                        label=f"Download {pending_download['filename']}",
+                        data=filepath.read_bytes(),
+                        file_name=pending_download["filename"],
+                        mime="application/pdf",
+                        key=f"agent_download_{len(st.session_state.messages)}",
+                        type="primary",
+                    )
+                    # Store download info in the message for re-rendering
+                    response_with_download = {
+                        "content": response,
+                        "download": pending_download,
+                    }
+                    st.session_state.messages.append({"role": "assistant", **response_with_download})
+                else:
+                    st.error("Report file not found.")
+                    st.session_state.messages.append({"role": "assistant", "content": response})
+            else:
+                st.session_state.messages.append({"role": "assistant", "content": response})
 
 
 def render_review_panel():
@@ -631,14 +731,14 @@ def render_review_panel():
                         st.success("Workflow completed!")
                         report_path = result.get("report_path", "")
                         if report_path and Path(report_path).exists():
-                            with open(report_path, "rb") as f:
-                                st.download_button(
-                                    label="Download Report",
-                                    data=f,
-                                    file_name=Path(report_path).name,
-                                    mime="application/pdf",
-                                    use_container_width=True
-                                )
+                            pdf_bytes = Path(report_path).read_bytes()
+                            st.download_button(
+                                label="Download Report",
+                                data=pdf_bytes,
+                                file_name=Path(report_path).name,
+                                mime="application/pdf",
+                                use_container_width=True
+                            )
                     
                     # Clear review state
                     st.session_state.active_review = None
@@ -684,29 +784,33 @@ def render_reports_panel():
         st.session_state.selected_report = report["name"]
     
     # Report info bar
-    col1, col2, col3 = st.columns([2, 1, 1])
+    display = report.get("display_name", report["name"])
+    doc_count = report.get("document_count", 0)
+    owner = report.get("owner_id") or "cli"
+    
+    col1, col2 = st.columns([3, 1])
     with col1:
-        st.markdown(f"**{report['name']}**")
+        st.markdown(f"**{display}**")
+        st.caption(f"Owner: {owner} | Documents: {doc_count}")
     with col2:
-        st.caption(f"Generated: {report['modified'].strftime('%Y-%m-%d %H:%M')}")
-    with col3:
         size_str = f"{report['size_kb']:.0f} KB" if report['size_kb'] < 1024 else f"{report['size_kb']/1024:.1f} MB"
         st.caption(f"Size: {size_str}")
     
+    # Read PDF once for both download and preview
+    pdf_bytes = report["path"].read_bytes()
+    
     # Download button
-    with open(report["path"], "rb") as f:
-        st.download_button(
-            label="Download Report",
-            data=f,
-            file_name=report["name"],
-            mime="application/pdf",
-        )
+    st.download_button(
+        label="Download Report",
+        data=pdf_bytes,
+        file_name=report["name"],
+        mime="application/pdf",
+    )
     
     st.divider()
     
     # PDF preview using iframe
-    with open(report["path"], "rb") as f:
-        base64_pdf = base64.b64encode(f.read()).decode('utf-8')
+    base64_pdf = base64.b64encode(pdf_bytes).decode('utf-8')
     
     pdf_display = f'<iframe src="data:application/pdf;base64,{base64_pdf}" width="100%" height="700" type="application/pdf" style="border: 1px solid #e5e7eb; border-radius: 0.5rem;"></iframe>'
     st.markdown(pdf_display, unsafe_allow_html=True)
@@ -714,6 +818,7 @@ def render_reports_panel():
 
 def main():
     """Main application entry point."""
+    # Validate config first
     try:
         config.validate()
     except ValueError as e:
@@ -721,13 +826,30 @@ def main():
         st.info("Please ensure OPENAI_API_KEY is set in your .env file")
         return
     
+    # Authentication gate
+    if not render_login():
+        st.markdown("---")
+        st.markdown("**Demo Credentials:**")
+        st.markdown("- Admin: `admin` / `admin123`")
+        st.markdown("- Borrower: `borrower` / `borrower123`")
+        return
+    
+    # User is authenticated - initialize and render app
     init_session_state()
     render_sidebar()
+    
+    user = get_current_user()
     
     if st.session_state.view_mode == "chat":
         render_chat()
     elif st.session_state.view_mode == "review":
-        render_review_panel()
+        # Double-check permission (shouldn't reach here for borrowers)
+        if user and user.can_review_documents():
+            render_review_panel()
+        else:
+            st.error("You don't have permission to access document reviews.")
+            st.session_state.view_mode = "chat"
+            st.rerun()
     else:
         render_reports_panel()
 

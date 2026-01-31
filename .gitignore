@@ -14,6 +14,8 @@
 # ChromaDB vector store
 .chroma_db/
 
+config/
+
 # Test documents / reports
 input_pdfs/
 output_reports/

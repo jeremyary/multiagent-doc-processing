@@ -66,6 +66,7 @@ class WorkflowState(TypedDict):
     # Input
     input_directory: str
     doc_limit: int | None
+    owner_id: str | None  # User who initiated the workflow (for report filtering)
     
     # Extraction phase
     pdf_files: list[str]

@@ -33,6 +33,16 @@ Knowledge Base (RAG):
   python main.py --clear-knowledge                   # Clear the knowledge base
   python create_knowledge_base.py                    # Generate sample regulation PDFs in knowledge_base directory
 
+Chat History:
+  python main.py --chat-stats                        # View chat session statistics
+  python main.py --clear-chat-history                # Clear all chat histories
+
+User Memory:
+  python main.py --memory-stats                      # View user memory statistics
+  python main.py --memory-stats --user <id>          # View facts for specific user
+  python main.py --clear-memory                      # Clear all user memory (facts + conversations)
+  python main.py --clear-memory --user <id>          # Clear memory for specific user
+
 Environment Variables (see .env.example):
   OPENAI_API_KEY        Required. Your OpenAI API key
   OPENAI_BASE_URL       Optional. Custom endpoint (default: https://api.openai.com/v1)
@@ -129,6 +139,39 @@ Environment Variables (see .env.example):
         help="Directory containing PDFs to ingest (default: ./knowledge_base)"
     )
     
+    # Chat history arguments
+    parser.add_argument(
+        "--chat-stats",
+        action="store_true",
+        help="Show chat session statistics and exit"
+    )
+    
+    parser.add_argument(
+        "--clear-chat-history",
+        action="store_true",
+        help="Clear all chat session histories"
+    )
+    
+    # User memory arguments
+    parser.add_argument(
+        "--memory-stats",
+        action="store_true",
+        help="Show user memory statistics and exit"
+    )
+    
+    parser.add_argument(
+        "--clear-memory",
+        action="store_true",
+        help="Clear user memory (facts and conversation memory)"
+    )
+    
+    parser.add_argument(
+        "--user",
+        type=str,
+        default=None,
+        help="User ID for memory operations (e.g., 'admin', 'borrower')"
+    )
+    
     return parser.parse_args()
 
 
@@ -186,6 +229,88 @@ def main() -> int:
             print("\nTo create sample knowledge base PDFs, run:")
             print("  python create_knowledge_base.py")
             return 1
+    
+    # Handle chat history operations
+    if args.chat_stats:
+        from agents.chat import get_chat_agent
+        agent = get_chat_agent()
+        sessions = agent.list_sessions()
+        print("Chat History Statistics:")
+        print(f"  Total sessions: {len(sessions)}")
+        print(f"  Database file:  {agent.db_path}")
+        if sessions:
+            print(f"  Session IDs:")
+            for session in sessions[:10]:  # Show first 10
+                print(f"    - {session}")
+            if len(sessions) > 10:
+                print(f"    ... and {len(sessions) - 10} more")
+        return 0
+    
+    if args.clear_chat_history:
+        import sqlite3
+        try:
+            conn = sqlite3.connect(config.APP_DATA_DB_PATH)
+            # Clear chat checkpoints (thread_ids containing 'chat-')
+            cursor = conn.execute(
+                "DELETE FROM checkpoints WHERE thread_id LIKE '%chat-%'"
+            )
+            count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            print(f"Cleared {count} chat session checkpoints from database")
+        except Exception as e:
+            print(f"Error clearing chat history: {e}")
+        return 0
+    
+    # Handle user memory operations
+    if args.memory_stats:
+        from utils.user_memory import get_facts_store, get_conversation_memory
+        
+        facts_store = get_facts_store()
+        conv_memory = get_conversation_memory()
+        
+        print("User Memory Statistics:")
+        print(f"  App database:          {config.APP_DATA_DB_PATH}")
+        print(f"  Vector storage:        {config.CHROMA_DB_PATH}")
+        
+        if args.user:
+            facts = facts_store.get_facts(args.user)
+            conv_count = conv_memory.get_user_history_count(args.user)
+            print(f"\n  User '{args.user}':")
+            print(f"    Facts stored:        {len(facts)}")
+            print(f"    Conversations:       {conv_count}")
+            if facts:
+                print(f"    Known facts:")
+                for fact_type, details in facts.items():
+                    print(f"      - {fact_type}: {details['value']}")
+        else:
+            stats = facts_store.get_stats()
+            print(f"  Users with facts:      {stats['users']}")
+            print(f"  Total facts stored:    {stats['facts']}")
+            print("\n  Use --memory-stats --user <id> to see a specific user's facts")
+        return 0
+    
+    if args.clear_memory:
+        from utils.user_memory import get_facts_store, get_conversation_memory
+        
+        facts_store = get_facts_store()
+        conv_memory = get_conversation_memory()
+        
+        if args.user:
+            # Clear for specific user
+            facts_cleared = facts_store.clear_user(args.user)
+            conv_cleared = conv_memory.clear_user(args.user)
+            print(f"Cleared memory for user '{args.user}':")
+            print(f"  Facts cleared:         {facts_cleared}")
+            print(f"  Conversations cleared: {conv_cleared}")
+        else:
+            # Clear all
+            facts_cleared = facts_store.clear_all()
+            conv_cleared = conv_memory.clear_all()
+            print(f"Cleared all user memory:")
+            print(f"  Facts cleared:         {facts_cleared}")
+            print(f"  Conversations cleared: {conv_cleared}")
+        return 0
     
     # Handle cache-only operations
     if args.cache_stats:

@@ -57,9 +57,50 @@ class Config:
     INPUT_PDF_DIR: Path = Path(os.getenv("INPUT_PDF_DIR", "./input_pdfs"))
     OUTPUT_REPORT_DIR: Path = Path(os.getenv("OUTPUT_REPORT_DIR", "./output_reports"))
     
-    # Database paths (relative paths resolved from BASE_DIR)
-    CHECKPOINT_DB_PATH: str = _resolve_db_path("CHECKPOINT_DB_PATH", ".workflow_checkpoints.db", BASE_DIR)
-    DOCUMENT_CACHE_DB_PATH: str = _resolve_db_path("DOCUMENT_CACHE_DB_PATH", ".document_cache.db", BASE_DIR)
+    # Single SQLite database for all app data (checkpoints, cache, user memory)
+    APP_DATA_DB_PATH: str = _resolve_db_path("APP_DATA_DB_PATH", ".app_data.db", BASE_DIR)
+    
+    # ==========================================================================
+    # RAG / Knowledge Base Settings
+    # ==========================================================================
+    KNOWLEDGE_BASE_DIR: Path = Path(os.getenv("KNOWLEDGE_BASE_DIR", "./knowledge_base"))
+    CHROMA_DB_PATH: str = _resolve_db_path("CHROMA_DB_PATH", ".chroma_db", BASE_DIR)
+    RAG_EMBEDDING_MODEL: str = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+    RAG_CHUNK_SIZE: int = int(os.getenv("RAG_CHUNK_SIZE", "1000"))
+    RAG_CHUNK_OVERLAP: int = int(os.getenv("RAG_CHUNK_OVERLAP", "200"))
+    RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "4"))
+    
+    # ==========================================================================
+    # Chat Settings
+    # ==========================================================================
+    CHAT_TEMPERATURE: float = float(os.getenv("CHAT_TEMPERATURE", "0.7"))
+    CHAT_MAX_HISTORY: int = int(os.getenv("CHAT_MAX_HISTORY", "50"))  # Max messages per session
+    
+    # ==========================================================================
+    # User Memory Settings
+    # ==========================================================================
+    # Fact extraction settings
+    MEMORY_EXTRACT_FACTS: bool = os.getenv("MEMORY_EXTRACT_FACTS", "true").lower() in ("true", "1", "yes")
+    MEMORY_FACT_MIN_CONFIDENCE: float = float(os.getenv("MEMORY_FACT_MIN_CONFIDENCE", "0.7"))
+    
+    # Conversation memory settings
+    MEMORY_STORE_CONVERSATIONS: bool = os.getenv("MEMORY_STORE_CONVERSATIONS", "true").lower() in ("true", "1", "yes")
+    MEMORY_RECALL_TOP_K: int = int(os.getenv("MEMORY_RECALL_TOP_K", "3"))
+    
+    # ==========================================================================
+    # BatchData.io API (Property Data)
+    # ==========================================================================
+    # If API key is not set, property lookup tools will be unavailable
+    BATCHDATA_API_KEY: str = os.getenv("BATCHDATA_API_KEY", "")
+    BATCHDATA_BASE_URL: str = os.getenv("BATCHDATA_BASE_URL", "https://api.batchdata.com/api/v1")
+    
+    # ==========================================================================
+    # Brave Search API (Web Search)
+    # ==========================================================================
+    # If API key is not set, web search tool will be unavailable
+    # Get an API key at: https://brave.com/search/api/
+    BRAVE_SEARCH_API_KEY: str = os.getenv("BRAVE_SEARCH_API_KEY", "")
+    BRAVE_SEARCH_BASE_URL: str = os.getenv("BRAVE_SEARCH_BASE_URL", "https://api.search.brave.com/res/v1")
     
     # ==========================================================================
     # Document Categories (Mortgage Loan Process)
@@ -94,6 +135,7 @@ class Config:
         
         cls.INPUT_PDF_DIR.mkdir(parents=True, exist_ok=True)
         cls.OUTPUT_REPORT_DIR.mkdir(parents=True, exist_ok=True)
+        cls.KNOWLEDGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 config = Config()
