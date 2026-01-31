@@ -1,10 +1,11 @@
 # This project was developed with assistance from AI tools.
 import os
+import sqlite3
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Any, Callable
 from langgraph.graph import StateGraph, END, START
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.types import RetryPolicy
+from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.types import RetryPolicy, Command
 from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
 
 from models import WorkflowState, WorkflowError
@@ -44,12 +45,15 @@ class WorkflowOrchestrator:
         self.extractor = PDFExtractorAgent()
         self.classifier = ClassifierAgent()
         self.graph = self._build_graph()
+        self.checkpointing = checkpointing
         
         if checkpointing:
-            self.memory = MemorySaver()
-            self.compiled_graph = self.graph.compile(checkpointer=self.memory)
+            self._db_conn = sqlite3.connect(config.CHECKPOINT_DB_PATH, check_same_thread=False)
+            self.checkpointer = SqliteSaver(self._db_conn)
+            self.compiled_graph = self.graph.compile(checkpointer=self.checkpointer)
         else:
-            self.memory = None
+            self._db_conn = None
+            self.checkpointer = None
             self.compiled_graph = self.graph.compile()
     
     def _build_graph(self) -> StateGraph:
@@ -143,30 +147,53 @@ class WorkflowOrchestrator:
         
         return "skip"
     
+    def _has_checkpoint(self, thread_id: str) -> bool:
+        """Check if a checkpoint exists for the given thread_id."""
+        if not self.checkpointer or not thread_id:
+            return False
+        try:
+            checkpoint = self.checkpointer.get({"configurable": {"thread_id": thread_id}})
+            return checkpoint is not None
+        except Exception:
+            return False
+    
     def run(
         self, 
         input_directory: str,
         thread_id: str | None = None,
         session_id: str | None = None,
-        use_cache: bool = True
-    ) -> WorkflowState:
+        use_cache: bool = True,
+        doc_limit: int | None = None,
+        interrupt_handler: Callable | None = None
+    ) -> tuple[WorkflowState, str | None]:
         """
-        Execute the full workflow.
+        Execute the full workflow with interrupt handling.
+        
+        If thread_id is provided and a checkpoint exists, resumes from that state.
+        Otherwise, starts a new workflow.
         
         Args:
             input_directory: Path to directory containing PDF files
-            thread_id: Optional thread ID for checkpointing
+            thread_id: Thread ID for checkpointing. If exists, resumes; otherwise starts fresh.
             session_id: Optional session ID for LangFuse tracking
             use_cache: Whether to use document cache for LLM results
+            doc_limit: Optional limit on number of documents to process
+            interrupt_handler: Callback to handle interrupts (receives interrupt data, returns resume data)
         
         Returns:
-            Final workflow state with all results
+            Tuple of (final workflow state, thread_id used)
         """
         langfuse_enabled = bool(os.getenv('LANGFUSE_SECRET_KEY'))
         print(f"LangFuse Tracking: {'Enabled' if langfuse_enabled else 'Disabled'}")
         
+        if self.checkpointing:
+            resuming = self._has_checkpoint(thread_id)
+        else:
+            resuming = False
+        
         initial_state: WorkflowState = {
             "input_directory": input_directory,
+            "doc_limit": doc_limit,
             "pdf_files": [],
             "extracted_documents": [],
             "extraction_errors": [],
@@ -180,9 +207,9 @@ class WorkflowOrchestrator:
         }
         
         invoke_config: dict = {}
-        if self.memory:
-            default_thread_id = f"doc-orchestrator-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            invoke_config["configurable"] = {"thread_id": thread_id or default_thread_id}
+        if self.checkpointing and thread_id:
+            invoke_config["configurable"] = {"thread_id": thread_id}
+            print(f"Thread ID: {thread_id}")
         
         if langfuse_enabled:
             langfuse_handler = LangfuseCallbackHandler(
@@ -190,17 +217,50 @@ class WorkflowOrchestrator:
                 metadata={
                     "workflow": "document_orchestrator",
                     "use_cache": use_cache,
+                    "thread_id": thread_id,
                 }
             )
             invoke_config["callbacks"] = [langfuse_handler]
         
         try:
-            final_state = self.compiled_graph.invoke(initial_state, invoke_config)
-            self._print_summary(final_state)
-            return final_state
+            # If checkpoint exists, resume; otherwise start fresh
+            if resuming:
+                print(f"Resuming workflow from checkpoint...")
+                result = self.compiled_graph.invoke(None, invoke_config)
+            else:
+                result = self.compiled_graph.invoke(initial_state, invoke_config)
+            
+            # Handle interrupts in a loop
+            while "__interrupt__" in result:
+                interrupt_data = result["__interrupt__"]
+                
+                if interrupt_handler is None:
+                    print("\n[WARNING] Workflow interrupted but no handler provided")
+                    print(f"To resume later, run with: --thread-id {thread_id}")
+                    return result, thread_id
+                
+                # Get the interrupt value (first interrupt's value)
+                if interrupt_data and len(interrupt_data) > 0:
+                    interrupt_value = interrupt_data[0].value if hasattr(interrupt_data[0], 'value') else interrupt_data[0]
+                else:
+                    interrupt_value = interrupt_data
+                
+                # Call the interrupt handler to get resume data
+                resume_data = interrupt_handler(interrupt_value)
+                
+                # Resume the workflow with the human input
+                result = self.compiled_graph.invoke(
+                    Command(resume=resume_data),
+                    invoke_config
+                )
+            
+            self._print_summary(result)
+            return result, thread_id
             
         except Exception as e:
             print(f"\n[ERROR] Workflow failed: {e}")
+            if thread_id:
+                print(f"To resume, run with: --thread-id {thread_id}")
             raise
     
     def _print_summary(self, state: WorkflowState) -> None:

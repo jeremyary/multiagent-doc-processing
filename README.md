@@ -110,8 +110,9 @@ python main.py [OPTIONS]
 Options:
   -i, --input-dir PATH      Input directory containing PDFs (default: ./input_pdfs)
   -o, --output-dir PATH     Output directory for reports (default: ./output_reports)
-  --no-checkpointing        Disable LangGraph state checkpointing
-  --thread-id ID            Thread ID for checkpointing (auto-generated if omitted)
+  -l, --limit N             Process only first N documents (default: all)
+  --thread-id ID            Thread ID for checkpointing (auto-resumes if checkpoint exists)
+  --no-checkpointing        Disable state checkpointing (disables resume capability)
   --session-id ID           Session ID for LangFuse tracking
 
 Cache options:
@@ -120,31 +121,18 @@ Cache options:
   --no-cache                Disable caching for this run
 ```
 
-## Document Categories
+### Resuming Interrupted Workflows
 
-Documents are classified into mortgage loan process categories:
+Workflows are automatically checkpointed to SQLite. If interrupted, resume by passing the same thread ID:
 
-| Category | Description |
-|----------|-------------|
-| Loan Application | Mortgage application forms, 1003/URLA forms |
-| Pre-Approval Letter | Conditional approval letters from lenders |
-| Income Verification | W-2 forms, pay stubs, 1099s, tax returns |
-| Employment Verification | Employer letters confirming employment/salary |
-| Bank Statement | Checking, savings, investment account statements |
-| Credit Report | Credit scores, credit history, tri-merge reports |
-| Property Appraisal | Property valuation reports, comparable sales |
-| Title Report | Title search results, title insurance, lien searches |
-| Homeowners Insurance | Insurance quotes, policy declarations |
-| Closing Disclosure | Final loan terms, HUD-1 settlements, cost breakdowns |
-| Loan Estimate | Initial loan terms and cost estimates |
-| Deed/Mortgage Note | Property deeds, mortgage notes, trust deeds |
-| HOA Documentation | HOA disclosures, CC&Rs, association financials |
-| Gift Letter | Letters documenting gifted funds for down payment |
-| Identity Verification | Driver's license, passport, government ID copies |
-| Property Tax Statement | Tax assessments, property tax bills |
-| Divorce Decree/Legal Judgment | Divorce papers, court orders, legal settlements |
-| Bankruptcy Documentation | Bankruptcy filings, discharge papers |
-| Unknown Relevance | Documents not fitting mortgage loan categories |
+```bash
+# Initial run displays thread ID
+python main.py
+# Thread ID: doc-20260131-071500
+
+# Resume later (auto-detects existing checkpoint)
+python main.py --thread-id doc-20260131-071500
+```
 
 ## Human-in-the-Loop Review
 
