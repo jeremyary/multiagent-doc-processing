@@ -5,24 +5,16 @@ RAG (Retrieval-Augmented Generation) utilities for the mortgage assistant.
 Uses ChromaDB for vector storage and HuggingFace embeddings.
 """
 import logging
-import os
 from pathlib import Path
 
 from langchain_chroma import Chroma
-
-logger = logging.getLogger(__name__)
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
 
 from config import config
 
-# Default paths
-DEFAULT_KNOWLEDGE_DIR = Path(__file__).parent.parent / "knowledge_base"
-DEFAULT_CHROMA_DIR = Path(__file__).parent.parent / ".chroma_db"
-
-# Embedding model
-EMBEDDING_MODEL = os.getenv("RAG_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+logger = logging.getLogger(__name__)
 
 
 class RAGManager:
@@ -31,32 +23,33 @@ class RAGManager:
     def __init__(
         self, 
         persist_directory: str | Path | None = None,
-        embedding_model: str = EMBEDDING_MODEL,
+        embedding_model: str | None = None,
         collection_name: str = "mortgage_regulations"
     ):
         """
         Initialize the RAG manager.
         
         Args:
-            persist_directory: Directory to persist ChromaDB data
-            embedding_model: HuggingFace model for embeddings
+            persist_directory: Directory to persist ChromaDB data (default: from config)
+            embedding_model: HuggingFace model for embeddings (default: from config)
             collection_name: Name of the ChromaDB collection
         """
-        self.persist_directory = Path(persist_directory or DEFAULT_CHROMA_DIR)
+        self.persist_directory = Path(persist_directory or config.CHROMA_DB_PATH)
+        self.embedding_model = embedding_model or config.RAG_EMBEDDING_MODEL
         self.collection_name = collection_name
         
         # Initialize embeddings
-        logger.info(f"Loading embedding model: {embedding_model}")
+        logger.info(f"Loading embedding model: {self.embedding_model}")
         self.embeddings = HuggingFaceEmbeddings(
-            model_name=embedding_model,
+            model_name=self.embedding_model,
             model_kwargs={'device': 'cpu'},  # Use CPU for embeddings
             encode_kwargs={'normalize_embeddings': True}
         )
         
-        # Text splitter for chunking documents
+        # Text splitter for chunking documents (config-driven)
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
-            chunk_overlap=200,
+            chunk_size=config.RAG_CHUNK_SIZE,
+            chunk_overlap=config.RAG_CHUNK_OVERLAP,
             length_function=len,
             separators=["\n\n", "\n", ". ", " ", ""]
         )
@@ -131,12 +124,12 @@ class RAGManager:
         Ingest all PDFs from a directory into the knowledge base.
         
         Args:
-            directory: Path to directory containing PDFs (defaults to knowledge_base/)
+            directory: Path to directory containing PDFs (defaults to config.KNOWLEDGE_BASE_DIR)
             
         Returns:
             Summary dict with counts
         """
-        directory = Path(directory or DEFAULT_KNOWLEDGE_DIR)
+        directory = Path(directory or config.KNOWLEDGE_BASE_DIR)
         
         if not directory.exists():
             raise FileNotFoundError(f"Directory not found: {directory}")
@@ -173,7 +166,7 @@ class RAGManager:
     def retrieve(
         self, 
         query: str, 
-        k: int = 4,
+        k: int | None = None,
         max_distance: float = 2.0
     ) -> list[Document]:
         """
@@ -181,12 +174,13 @@ class RAGManager:
         
         Args:
             query: The search query
-            k: Number of documents to retrieve
+            k: Number of documents to retrieve (default: config.RAG_TOP_K)
             max_distance: Maximum distance score (lower is more similar, typically 0-2)
             
         Returns:
             List of relevant documents
         """
+        k = k or config.RAG_TOP_K
         if not self.has_documents():
             return []
         
@@ -202,18 +196,18 @@ class RAGManager:
         
         return filtered_docs
     
-    def retrieve_with_context(self, query: str, k: int = 4) -> str:
+    def retrieve_with_context(self, query: str, k: int | None = None) -> str:
         """
         Retrieve relevant documents and format as context string.
         
         Args:
             query: The search query
-            k: Number of documents to retrieve
+            k: Number of documents to retrieve (default: config.RAG_TOP_K)
             
         Returns:
             Formatted context string for LLM prompt
         """
-        docs = self.retrieve(query, k=k)
+        docs = self.retrieve(query, k=k or config.RAG_TOP_K)
         
         if not docs:
             return ""
@@ -247,7 +241,9 @@ class RAGManager:
                 "total_chunks": count,
                 "persist_directory": str(self.persist_directory),
                 "collection_name": self.collection_name,
-                "embedding_model": EMBEDDING_MODEL,
+                "embedding_model": self.embedding_model,
+                "chunk_size": config.RAG_CHUNK_SIZE,
+                "chunk_overlap": config.RAG_CHUNK_OVERLAP,
             }
         except Exception as e:
             return {"error": str(e)}

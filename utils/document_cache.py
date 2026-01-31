@@ -226,5 +226,5 @@ class DocumentCache:
         return count
 
 
-# Global cache instance
-document_cache = DocumentCache(config.DOCUMENT_CACHE_DB_PATH)
+# Global cache instance (uses shared app database)
+document_cache = DocumentCache(config.APP_DATA_DB_PATH)

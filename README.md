@@ -35,13 +35,14 @@ flowchart TB
         cache[(Document Cache)]
         checkpoints[(Checkpoints)]
         chroma[(ChromaDB)]
+        users[(Users YAML)]
     end
 
     subgraph ui["Web UI (Streamlit)"]
-        direction LR
-        chat_tab[Chat Tab]
-        review_tab[Reviews Tab]
-        reports_tab[Reports Tab]
+        direction TB
+        auth[Auth Layer]
+        auth -->|admin| admin_view[Chat + Reviews + Reports]
+        auth -->|borrower| borrower_view[Chat + Reports]
     end
 
     extract -.->|cache hit/miss| cache
@@ -49,9 +50,12 @@ flowchart TB
     workflow -.->|state| checkpoints
     chat -.->|state| checkpoints
     retrieve -.->|similarity search| chroma
+    auth -.->|credentials| users
 
-    ui --> workflow
-    ui --> chat
+    admin_view --> workflow
+    admin_view --> chat
+    borrower_view --> workflow
+    borrower_view --> chat
 ```
 
 ### Components
@@ -67,6 +71,7 @@ flowchart TB
 | Chat Agent | Agent | LangGraph-based conversational agent with optional RAG |
 | RAG Manager | Utility | ChromaDB vector store with HuggingFace embeddings for knowledge retrieval |
 | **Infrastructure** | | |
+| Auth Layer | Utility | Role-based access control (admin/borrower) with session management |
 | Document Cache | Utility | SQLite cache for LLM results, keyed by content hash |
 | Checkpointer | Utility | SQLite-based state persistence for workflow resumability |
 | OCR | Utility | docTR-based OCR with dynamic CPU/GPU selection |
@@ -221,12 +226,39 @@ Options:
 
 ## Web UI
 
-A Streamlit-based interface with three main views:
-
-- **Chat**: Ask questions about mortgage regulations (with optional RAG toggle)
-- **Reviews**: Handle pending human review tasks from interrupted workflows
-- **Reports**: View and download generated classification reports
+A Streamlit-based interface with role-based access control.
 
 ```bash
 streamlit run frontend/app.py
 ```
+
+### Authentication
+
+The UI requires login with one of two roles:
+
+| Role | Username | Password | Access |
+|------|----------|----------|--------|
+| Admin | `admin` | `admin123` | Full access: Chat, Reviews, Reports |
+| Borrower | `borrower` | `borrower123` | Limited: Chat, Upload, Own Reports |
+
+User credentials are stored in `config/users.yaml`. To add users or change passwords:
+
+```bash
+# Generate password hash
+python -c "import streamlit_authenticator as stauth; print(stauth.Hasher().hash('your_password'))"
+```
+
+### Views by Role
+
+| View | Borrower | Admin |
+|------|----------|-------|
+| **Chat** | Ask questions, toggle RAG | Same |
+| **Document Upload** | Upload and process PDFs | Same |
+| **Reviews** | No access | Classify unknown documents |
+| **Reports** | View own reports | View all reports |
+
+### Data Isolation
+
+- Upload directories are scoped by username: `uploads/{username}/batch-{timestamp}/`
+- Workflow thread IDs include username prefix: `{username}-ui-{timestamp}`
+- Chat sessions are user-specific: `{username}-chat-{timestamp}`
