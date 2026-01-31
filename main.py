@@ -27,12 +27,19 @@ Examples:
   python main.py --no-cache                          # Run without document caching
   python main.py --no-checkpointing                  # Run without state checkpointing
 
+Knowledge Base (RAG):
+  python main.py --ingest-knowledge                  # Ingest knowledge_base directory docs into RAG vector store
+  python main.py --knowledge-stats                   # View knowledge base statistics
+  python main.py --clear-knowledge                   # Clear the knowledge base
+  python create_knowledge_base.py                    # Generate sample regulation PDFs in knowledge_base directory
+
 Environment Variables (see .env.example):
   OPENAI_API_KEY        Required. Your OpenAI API key
   OPENAI_BASE_URL       Optional. Custom endpoint (default: https://api.openai.com/v1)
   OPENAI_MODEL          Optional. Model name (default: gpt-4o-mini)
   LANGFUSE_SECRET_KEY   Optional. Enables LangFuse tracing
   OCR_ENABLED           Optional. Enable OCR for scanned PDFs (default: true)
+  RAG_EMBEDDING_MODEL   Optional. HuggingFace model for RAG embeddings
         """
     )
     
@@ -96,6 +103,32 @@ Environment Variables (see .env.example):
         help="Limit processing to first N documents (default: all)"
     )
     
+    # Knowledge Base (RAG) arguments
+    parser.add_argument(
+        "--ingest-knowledge",
+        action="store_true",
+        help="Ingest PDFs from knowledge_base/ into RAG vector store"
+    )
+    
+    parser.add_argument(
+        "--knowledge-stats",
+        action="store_true",
+        help="Show RAG knowledge base statistics and exit"
+    )
+    
+    parser.add_argument(
+        "--clear-knowledge",
+        action="store_true",
+        help="Clear the RAG knowledge base"
+    )
+    
+    parser.add_argument(
+        "--knowledge-dir",
+        type=str,
+        default=None,
+        help="Directory containing PDFs to ingest (default: ./knowledge_base)"
+    )
+    
     return parser.parse_args()
 
 
@@ -115,6 +148,44 @@ def validate_environment() -> bool:
 def main() -> int:
     """Main entry point."""
     args = parse_args()
+    
+    # Handle knowledge base operations
+    if args.knowledge_stats:
+        from utils.rag import get_rag_manager
+        rag = get_rag_manager()
+        stats = rag.get_stats()
+        print("RAG Knowledge Base Statistics:")
+        print(f"  Total chunks:       {stats.get('total_chunks', 0)}")
+        print(f"  Persist directory:  {stats.get('persist_directory', 'N/A')}")
+        print(f"  Collection:         {stats.get('collection_name', 'N/A')}")
+        print(f"  Embedding model:    {stats.get('embedding_model', 'N/A')}")
+        return 0
+    
+    if args.clear_knowledge:
+        from utils.rag import get_rag_manager
+        rag = get_rag_manager()
+        count = rag.clear()
+        print(f"Cleared {count} chunks from RAG knowledge base")
+        return 0
+    
+    if args.ingest_knowledge:
+        from utils.rag import get_rag_manager
+        rag = get_rag_manager()
+        knowledge_dir = Path(args.knowledge_dir) if args.knowledge_dir else None
+        
+        try:
+            result = rag.ingest_directory(knowledge_dir)
+            if result["files"] > 0:
+                print(f"\nKnowledge base ready for RAG queries.")
+                return 0
+            else:
+                print(f"\n[WARNING] No files were ingested.")
+                return 1
+        except FileNotFoundError as e:
+            print(f"[ERROR] {e}")
+            print("\nTo create sample knowledge base PDFs, run:")
+            print("  python create_knowledge_base.py")
+            return 1
     
     # Handle cache-only operations
     if args.cache_stats:

@@ -157,6 +157,109 @@ class WorkflowOrchestrator:
         except Exception:
             return False
     
+    def _get_human_review_interrupt(self, state_snapshot) -> dict | None:
+        """Extract human_review interrupt data from a state snapshot, if present."""
+        if not state_snapshot or "human_review" not in (state_snapshot.next or ()):
+            return None
+        
+        for task in (state_snapshot.tasks or []):
+            for interrupt in (task.interrupts or []):
+                value = interrupt.value if hasattr(interrupt, 'value') else interrupt
+                if isinstance(value, dict) and value.get("type") == "human_review":
+                    return value
+        return None
+    
+    def list_pending_reviews(self) -> list[dict]:
+        """
+        List all workflows waiting for human review.
+        
+        Returns:
+            List of dicts with thread_id and interrupt data
+        """
+        if not self._db_conn:
+            return []
+        
+        pending = []
+        try:
+            cursor = self._db_conn.execute(
+                "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE 'doc-%' OR thread_id LIKE 'ui-%'"
+            )
+            thread_ids = [row[0] for row in cursor.fetchall()]
+            
+            for thread_id in thread_ids:
+                state_snapshot = self.compiled_graph.get_state({"configurable": {"thread_id": thread_id}})
+                interrupt_data = self._get_human_review_interrupt(state_snapshot)
+                
+                if interrupt_data:
+                    pending.append({
+                        "thread_id": thread_id,
+                        "interrupt_data": interrupt_data,
+                        "documents": interrupt_data.get("documents", []),
+                        "categories": interrupt_data.get("categories", []),
+                    })
+        except Exception as e:
+            print(f"Error listing pending reviews: {e}")
+        
+        return pending
+    
+    def get_workflow_state(self, thread_id: str) -> dict | None:
+        """
+        Get the current state of a workflow by thread_id.
+        
+        Args:
+            thread_id: The workflow thread ID
+            
+        Returns:
+            The workflow state dict, or None if not found
+        """
+        if not self.checkpointer:
+            return None
+        
+        try:
+            state = self.compiled_graph.get_state({"configurable": {"thread_id": thread_id}})
+            if state and state.values:
+                return state.values
+        except Exception:
+            pass
+        
+        return None
+    
+    def resume_with_decisions(self, thread_id: str, decisions: dict[str, str | None]) -> dict:
+        """
+        Resume a paused workflow with human review decisions.
+        
+        Args:
+            thread_id: The workflow thread ID
+            decisions: Dict mapping filename to chosen category
+            
+        Returns:
+            Final workflow state
+        """
+        invoke_config = {"configurable": {"thread_id": thread_id}}
+        
+        langfuse_enabled = bool(os.getenv('LANGFUSE_SECRET_KEY'))
+        if langfuse_enabled:
+            langfuse_handler = LangfuseCallbackHandler(
+                metadata={
+                    "workflow": "document_orchestrator",
+                    "thread_id": thread_id,
+                    "resumed_from_ui": True,
+                }
+            )
+            invoke_config["callbacks"] = [langfuse_handler]
+        
+        # Resume with the human decisions
+        result = self.compiled_graph.invoke(
+            Command(resume=decisions),
+            invoke_config
+        )
+        
+        # Handle any additional interrupts (shouldn't happen, but be safe)
+        while "__interrupt__" in result:
+            return result  # Return early if another interrupt occurs
+        
+        return result
+    
     def run(
         self, 
         input_directory: str,

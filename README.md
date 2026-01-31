@@ -37,6 +37,8 @@ PDF documents go through a multi-step workflow designed for mortgage loan docume
 | Human Review | Utility | Interactive CLI for manually classifying uncertain documents |
 | Report Generator | Utility | Produces PDF report summarizing all processed documents |
 | Document Cache | Utility | SQLite-based cache for LLM results, keyed by content hash |
+| Chat Assistant | Agent | Conversational agent with RAG for Q&A about mortgage regulations |
+| RAG Manager | Utility | ChromaDB-based vector store for knowledge base retrieval |
 
 ## Installation
 
@@ -76,6 +78,9 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 OCR_ENABLED=true
 OCR_MIN_CHARS_PER_PAGE=50
 OCR_MIN_FREE_VRAM_GB=3.0
+
+# Optional - RAG settings
+RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
 ```
 
 ## Usage
@@ -155,3 +160,12 @@ Options:
 - Skip to keep AI classification
 
 Human-reviewed documents are marked in the final report with their original AI classification noted.
+
+## Chat Assistant (Web UI)
+
+A Streamlit-based chat interface for asking questions about mortgage documents and requirements.
+
+```bash
+# Start the chat UI
+streamlit run frontend/app.py
+```

@@ -7,13 +7,23 @@
 # SQLite database
 *.db
 *.db-journal
+*.db-lock
+*.db-shm
+*.db-wal
+
+# ChromaDB vector store
+.chroma_db/
 
 # Test documents / reports
 input_pdfs/
 output_reports/
+uploads/
+knowledge_base/
 
 !/input_pdfs/.gitkeep
 !/output_reports/.gitkeep
+!/uploads/.gitkeep
+!/knowledge_base/.gitkeep
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
