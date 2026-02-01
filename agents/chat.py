@@ -539,6 +539,74 @@ class ChatAgent:
         else:
             logger.info("Brave Search API key not configured - web search disabled")
         
+        # FRED Economic Data Tools (if API key is configured)
+        from utils.fred import is_available as fred_available
+        
+        if fred_available():
+            from prompts import (
+                TOOL_FRED_GET_SERIES,
+                TOOL_FRED_SEARCH,
+                TOOL_FRED_MORTGAGE_RATES,
+            )
+            from utils.fred import get_fred_client
+            
+            @tool(description=TOOL_FRED_GET_SERIES)
+            def fred_get_series(
+                series_id: str,
+                limit: int = 1,
+                start_date: str | None = None,
+                end_date: str | None = None,
+            ) -> str:
+                try:
+                    client = get_fred_client()
+                    if limit == 1 and not start_date and not end_date:
+                        result = client.get_latest_value(series_id)
+                        if result:
+                            return result.format_latest()
+                        return f"No data found for series {series_id}."
+                    else:
+                        result = client.get_observations(
+                            series_id,
+                            start_date=start_date,
+                            end_date=end_date,
+                            limit=limit,
+                        )
+                        if result:
+                            return result.format_display()
+                        return f"No data found for series {series_id}."
+                except Exception as e:
+                    logger.warning(f"FRED get_series failed: {e}")
+                    return f"Unable to retrieve economic data: {str(e)}"
+            
+            tools.append(fred_get_series)
+            
+            @tool(description=TOOL_FRED_SEARCH)
+            def fred_search_series(search_text: str, limit: int = 5) -> str:
+                try:
+                    client = get_fred_client()
+                    result = client.search_series(search_text, limit=limit)
+                    return result.format_display()
+                except Exception as e:
+                    logger.warning(f"FRED search failed: {e}")
+                    return f"Unable to search economic data series: {str(e)}"
+            
+            tools.append(fred_search_series)
+            
+            @tool(description=TOOL_FRED_MORTGAGE_RATES)
+            def fred_mortgage_rates() -> str:
+                try:
+                    client = get_fred_client()
+                    return client.get_mortgage_rates()
+                except Exception as e:
+                    logger.warning(f"FRED mortgage rates failed: {e}")
+                    return f"Unable to retrieve mortgage rates: {str(e)}"
+            
+            tools.append(fred_mortgage_rates)
+            
+            logger.info("FRED economic data tools enabled")
+        else:
+            logger.info("FRED API key not configured - economic data tools disabled")
+        
         return tools
     
     def _build_system_prompt(self, user_id: str) -> str:

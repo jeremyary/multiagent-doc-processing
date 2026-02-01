@@ -104,10 +104,21 @@ Use the search_knowledge_base tool when users ask about:
 - Follow-up questions about something you already explained
 - Questions about the user's specific personal situation
 
+**When to use economic data tools (FRED):**
+If FRED tools are available, USE THEM for economic/financial data questions:
+- Mortgage interest rates (use fred_mortgage_rates or fred_get_series with MORTGAGE30US/MORTGAGE15US)
+- Federal funds rate, prime rate (FEDFUNDS, DPRIME)
+- Inflation/CPI data (CPIAUCSL)
+- Unemployment rate (UNRATE)
+- Housing market data (HOUST for starts, MSPUS for median prices)
+- Any historical economic trends
+
+FRED is the authoritative source for U.S. economic data - prefer it over web search for financial statistics.
+
 **When to use the web search tool (web_search):**
-IMPORTANT: If the web_search tool is available, USE IT PROACTIVELY for:
+Use web_search AFTER FRED tools for economic data, but USE IT PROACTIVELY for:
 - Current events, news, sports, or recent happenings
-- Information that changes over time (interest rates, prices, statistics)
+- Information NOT available in FRED (lender-specific rates, news, etc.)
 - Questions phrased with "current", "latest", "today", "now", "recent", "reigning", "this year"
 - Anything you're uncertain about that could be verified with a web search
 - When the user explicitly asks you to search or look something up
@@ -122,6 +133,14 @@ Do NOT say "I don't have access to current information" if you have the web_sear
 **User data tools:**
 - Use get_my_reports when users ask about their generated reports
 - Use get_my_documents when users ask about documents they've processed or uploaded
+
+**App features you should know about (explain when users ask):**
+The app has a document processing feature. Key facts:
+- UPLOAD LOCATION: sidebar has a PDF file uploader (supports multiple files)
+- PROCESSING: extracts text (OCR for scans), auto-classifies into mortgage categories
+- HUMAN REVIEW: if docs are unclear/unknown, an admin reviews them (users just wait)
+- REPORTS TAB: final PDF report with categorized document summary
+- Use get_my_reports and get_my_documents tools to check user's history
 
 **What you CANNOT do (do not offer these):**
 - Send files, documents, or downloadable content
@@ -417,6 +436,68 @@ Args:
 
 Returns:
     Latitude, longitude, and location details"""
+
+
+# =============================================================================
+# Economic Data Tools (FRED - Federal Reserve Economic Data)
+# =============================================================================
+
+TOOL_FRED_GET_SERIES = """Get economic data from FRED (Federal Reserve Economic Data).
+
+Use this tool when the user asks about:
+- Current mortgage interest rates (30-year, 15-year fixed)
+- Federal funds rate or prime rate
+- Housing market data (housing starts, home prices)
+- Economic indicators (inflation/CPI, unemployment)
+- Historical economic data over time
+
+Common series you can look up:
+- MORTGAGE30US: 30-Year Fixed Rate Mortgage Average
+- MORTGAGE15US: 15-Year Fixed Rate Mortgage Average
+- FEDFUNDS: Federal Funds Rate
+- DPRIME: Bank Prime Loan Rate
+- CPIAUCSL: Consumer Price Index (Inflation)
+- UNRATE: Unemployment Rate
+- HOUST: Housing Starts
+- MSPUS: Median Sales Price of Houses Sold
+
+Args:
+    series_id: The FRED series ID (e.g., "MORTGAGE30US")
+    limit: Number of observations to return (default 1 for latest)
+    start_date: Optional start date (YYYY-MM-DD) for historical data
+    end_date: Optional end date (YYYY-MM-DD) for historical data
+
+Returns:
+    The data series with values and dates"""
+
+
+TOOL_FRED_SEARCH = """Search for FRED economic data series by keywords.
+
+Use this tool when:
+- You need to find the right series ID for a data request
+- User asks about economic data but doesn't specify a series
+- Looking for available data on a topic
+
+Args:
+    search_text: Keywords to search for (e.g., "mortgage rate", "housing", "inflation")
+    limit: Maximum results (default 5)
+
+Returns:
+    List of matching data series with their IDs and descriptions"""
+
+
+TOOL_FRED_MORTGAGE_RATES = """Get current mortgage interest rates from FRED.
+
+Use this tool when the user asks specifically about:
+- "What are current mortgage rates?"
+- "30-year mortgage rate"
+- "15-year mortgage rate"
+- Comparing mortgage rates
+
+This is a convenience tool that returns both 30-year and 15-year rates.
+
+Returns:
+    Current 30-year and 15-year fixed mortgage rates with dates"""
 
 
 # =============================================================================

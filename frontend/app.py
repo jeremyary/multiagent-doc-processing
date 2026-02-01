@@ -419,7 +419,9 @@ def render_chat_sidebar():
             user_prefix = get_user_thread_prefix()
             sessions = st.session_state.chat_agent.list_sessions(user_prefix=user_prefix)
         if sessions:
-            for session_id in sessions[-10:]:
+            # Sort newest-to-oldest (thread IDs contain timestamps)
+            sessions_sorted = sorted(sessions, reverse=True)
+            for session_id in sessions_sorted[:10]:
                 if session_id != st.session_state.chat_thread_id:
                     if st.button(f"{session_id}", key=f"load_{session_id}", use_container_width=True):
                         st.session_state.chat_thread_id = session_id
