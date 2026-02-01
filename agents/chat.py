@@ -70,9 +70,14 @@ class ChatAgent:
         # Current context (set per-request for tool access)
         self._current_user_id: str | None = None
         self._current_thread_id: str | None = None
+        self._current_user_email: str | None = None
         
         # Pending download (set by tool, consumed by frontend)
         self._pending_download: dict | None = None
+        
+        # Pending email (set by draft_email tool, consumed by frontend)
+        self._pending_email: dict | None = None
+        self._email_count: int = 0
         
         # Build authenticated graph with all tools (uses checkpointer)
         self._tools = self._get_tools(anonymous=False)
@@ -150,10 +155,13 @@ class ChatAgent:
         return ToolContext(
             get_user_id=lambda: self._current_user_id,
             get_thread_id=lambda: self._current_thread_id,
+            get_user_email=lambda: self._current_user_email,
             get_rag_manager=lambda: self.rag_manager,
             get_facts_store=lambda: self.facts_store,
             get_conversation_memory=lambda: self.conversation_memory,
             set_pending_download=lambda d: setattr(self, '_pending_download', d),
+            set_pending_email=lambda e: setattr(self, '_pending_email', e),
+            get_email_count=lambda: self._email_count,
         )
     
     def _get_tools(self, anonymous: bool = False) -> list:
@@ -411,10 +419,10 @@ class ChatAgent:
         
         try:
             result = self.compiled_graph.invoke(
-                {"messages": [HumanMessage(content=message)]},
-                invoke_config
+            {"messages": [HumanMessage(content=message)]},
+                    invoke_config
             )
-            
+        
             response_text = self._extract_response_text(result)
             
             # Store exchange and extract facts for authenticated users
@@ -511,7 +519,7 @@ class ChatAgent:
         
         Args:
             user_prefix: If provided, only return sessions for this user prefix
-            
+        
         Returns:
             List of thread IDs that have chat history
         """
@@ -522,7 +530,7 @@ class ChatAgent:
                     (f"{user_prefix}chat-%",)
                 )
             else:
-                cursor = self._db_conn.execute(
+                ursor = self._db_conn.execute(
                     "SELECT DISTINCT thread_id FROM checkpoints WHERE thread_id LIKE '%chat-%'"
                 )
             return [row[0] for row in cursor.fetchall()]
@@ -586,6 +594,61 @@ class ChatAgent:
         download = self._pending_download
         self._pending_download = None
         return download
+    
+    def get_pending_email(self) -> dict | None:
+        """
+        Get any pending email draft (does NOT clear it - call send_pending_email or clear_pending_email).
+        
+        Returns:
+            Email info dict with 'to', 'subject', 'body', 'user_id' or None
+        """
+        return self._pending_email
+    
+    def clear_pending_email(self):
+        """Clear the pending email without sending."""
+        self._pending_email = None
+    
+    def send_pending_email(self) -> str:
+        """
+        Actually send the pending email via Maileroo API.
+        
+        Returns:
+            Success/failure message
+        """
+        if not self._pending_email:
+            return "No email pending to send."
+        
+        from utils.email import is_available, get_client
+        
+        if not is_available():
+            self._pending_email = None
+            return "Email service is not configured."
+        
+        try:
+            client = get_client()
+            to_email = self._pending_email["to"]
+            result = client.send(
+                to_email=to_email,
+                subject=self._pending_email["subject"],
+                body=self._pending_email["body"],
+            )
+            
+            if result.success:
+                self._email_count += 1
+                self._pending_email = None
+                return f"Email sent successfully to {to_email}."
+            else:
+                self._pending_email = None
+                return f"Failed to send email: {result.error}"
+                
+        except Exception as e:
+            logger.error(f"Email send error: {e}")
+            self._pending_email = None
+            return f"Failed to send email: {str(e)}"
+    
+    def set_user_email(self, email: str | None):
+        """Set the current user's email (called by frontend before chat)."""
+        self._current_user_email = email
 
 
 # Singleton instance

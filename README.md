@@ -165,6 +165,7 @@ The authenticated chat assistant provides personalized help:
 - **Property Lookup** - Verify addresses, get property details, search listings
 - **Web Search** - Find current information (news, rates, etc.)
 - **Economic Data** - Get mortgage rates, Fed funds rate, CPI, unemployment from FRED
+- **Send Emails** - Offer email drafts for confirmation before sending to user's address
 
 Previous chat sessions are listed in the sidebar for easy switching.
 
@@ -225,6 +226,7 @@ The chat agent uses a ReAct architecture with dynamically available tools:
 | `fred_get_series` | When `FRED_API_KEY` set | Get economic data series (rates, CPI, etc.) |
 | `fred_search_series` | When `FRED_API_KEY` set | Search for FRED data series |
 | `fred_mortgage_rates` | When `FRED_API_KEY` set | Get current 30/15-year mortgage rates |
+| `draft_email` | Authenticated + `MAILEROO_SEND_KEY` | Draft email to user (requires confirmation) |
 
 ## Guardrails
 
