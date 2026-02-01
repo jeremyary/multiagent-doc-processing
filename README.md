@@ -1,15 +1,13 @@
-# Multiagent PDF Processing Workflow
+# Loan Processing with Agentic AI
 
 Proof-of-Concept multiagent workflow using LangGraph to orchestrate document extraction, classification, and reporting with human-in-the-loop interactivity.
+
+PDF documents go through a multi-step workflow designed for mortgage loan document classification. The workflow extracts content, classifies documents into mortgage-related categories, supports human-in-the-loop review for uncertain classifications, and generates a summary report.
 
 > [!NOTE]
 > This project was developed with assistance from AI tools.
 
-## Overview
-
-PDF documents go through a multi-step workflow designed for mortgage loan document classification. The workflow extracts content, classifies documents into mortgage-related categories, supports human-in-the-loop review for uncertain classifications, and generates a summary report.
-
-### Architecture
+## Architecture
 
 ```mermaid
 flowchart TB
@@ -62,7 +60,7 @@ flowchart TB
     borrower_view --> chat
 ```
 
-### Components
+## Components
 
 | Component | Type | Description |
 |-----------|------|-------------|
@@ -80,17 +78,16 @@ flowchart TB
 | Auth Layer | Utility | Role-based access control (admin/borrower) with session management |
 | Document Cache | Utility | SQLite cache for LLM results, keyed by content hash |
 | Checkpointer | Utility | SQLite-based state persistence for workflow resumability |
+| LangFuse | Observability | Full traceability for all LLM calls, tool invocations, and guardrail events |
 | OCR | Utility | docTR-based OCR with dynamic CPU/GPU selection |
 
-## Installation
-
-### Prerequisites
+## Prerequisites
 
 - Python 3.11+
 - OpenAI API key (or compatible endpoint)
 - CUDA-capable GPU (optional, for faster OCR)
 
-### Setup
+## Setup
 
 ```bash
 # Create virtual environment
@@ -136,8 +133,6 @@ The landing page is available to all visitors (no login required):
 - **Mortgage Calculator** - Calculate monthly payments with principal, interest, taxes, and insurance
 - **Chat Assistant** - Ask general mortgage questions, search property data, or look up economic indicators
 
-![Landing page view](./docs/images/landing-view.png)
-
 Anonymous chat has access to:
 - Knowledge base search (mortgage regulations)
 - Property lookup tools (if BatchData API configured)
@@ -145,6 +140,8 @@ Anonymous chat has access to:
 - Economic data (if FRED API configured)
 
 Anonymous sessions are traced but not persisted.
+
+![Landing page view](./docs/images/landing-view.png)
 
 ### Authentication
 
@@ -156,8 +153,6 @@ Log in to access full features:
 | Borrower | `borrower` | `borrower123` | Limited: Chat, Upload, Own Reports |
 
 User credentials are stored in `config/users.yaml`.
-
-![Authenticated user view](./docs/images/auth-view.png)
 
 ### Chat Assistant
 
@@ -184,6 +179,8 @@ In the sidebar:
    - Results cached for fast re-processing
 3. **View Results** - Check the Reports tab for your classification summary
 
+![Authenticated user view](./docs/images/auth-view.png)
+
 ### Human Review (Admin Only)
 
 When documents are classified as "Unknown Relevance" or have low confidence:
@@ -208,9 +205,7 @@ Borrowers see only their own reports; admins see all reports.
 
 ![Report view](./docs/images/report-view.png)
 
-## Technical Reference
-
-### Chat Agent Tools
+## Chat Agent Tools
 
 The chat agent uses a ReAct architecture with dynamically available tools:
 
@@ -231,7 +226,7 @@ The chat agent uses a ReAct architecture with dynamically available tools:
 | `fred_search_series` | When `FRED_API_KEY` set | Search for FRED data series |
 | `fred_mortgage_rates` | When `FRED_API_KEY` set | Get current 30/15-year mortgage rates |
 
-### Guardrails
+## Guardrails
 
 Defense-in-depth security for the chat agent:
 
@@ -243,7 +238,27 @@ Defense-in-depth security for the chat agent:
 
 Guardrails run as LangGraph nodes, visible in traces. Configure via environment variables.
 
-### Data Isolation
+## Observability (LangFuse)
+
+All LLM calls, tool invocations, and guardrail events are traced when LangFuse is configured:
+
+```bash
+# Add to .env
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com  # or self-hosted
+```
+
+Traces include:
+- Chat agent conversations (per user session)
+- Document processing workflows (extraction, classification)
+- Tool calls with inputs/outputs
+- Guardrail decisions (blocked/allowed)
+- Token usage and latency metrics
+
+View traces at [cloud.langfuse.com](https://cloud.langfuse.com) or your self-hosted instance.
+
+## Data Isolation
 
 - Upload directories are scoped by username: `uploads/{username}/batch-{timestamp}/`
 - Workflow thread IDs include username prefix: `{username}-ui-{timestamp}`
