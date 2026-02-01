@@ -111,6 +111,18 @@ class Config:
     FRED_BASE_URL: str = os.getenv("FRED_BASE_URL", "https://api.stlouisfed.org/fred")
     
     # ==========================================================================
+    # Maileroo API (Email)
+    # ==========================================================================
+    # If API key is not set, email tool will be unavailable
+    # Get an API key at: https://maileroo.com/
+    MAILEROO_SEND_KEY: str = os.getenv("MAILEROO_SEND_KEY", "")
+    MAILEROO_FROM_EMAIL: str = os.getenv("MAILEROO_FROM_EMAIL", "XXXXX.maileroo.org")
+    MAILEROO_FROM_NAME: str = os.getenv("MAILEROO_FROM_NAME", "Mortgage Assistant")
+    
+    # Email rate limiting (per user per session)
+    EMAIL_MAX_PER_SESSION: int = int(os.getenv("EMAIL_MAX_PER_SESSION", "5"))
+    
+    # ==========================================================================
     # Guardrails Settings (Defense in Depth)
     # ==========================================================================
     # Enable/disable guardrails (all disabled = pass-through mode)

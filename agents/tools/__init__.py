@@ -23,6 +23,7 @@ class ToolContext:
     # User identification
     get_user_id: Callable[[], str | None]
     get_thread_id: Callable[[], str | None]
+    get_user_email: Callable[[], str | None]
     
     # Service accessors (lazy-loaded)
     get_rag_manager: Callable[[], object | None]
@@ -31,6 +32,10 @@ class ToolContext:
     
     # Download state (for report downloads)
     set_pending_download: Callable[[dict], None]
+    
+    # Email state (for draft-and-confirm workflow)
+    set_pending_email: Callable[[dict], None]
+    get_email_count: Callable[[], int]
 
 
 def get_all_tools(context: ToolContext, anonymous: bool = False) -> list:
@@ -74,5 +79,12 @@ def get_all_tools(context: ToolContext, anonymous: bool = False) -> list:
     if fred_available():
         from .economic import create_tools as create_economic_tools
         tools.extend(create_economic_tools(context))
+    
+    # Email - authenticated only, when Maileroo API configured
+    if not anonymous:
+        from utils.email import is_available as email_available
+        if email_available():
+            from .email import create_tools as create_email_tools
+            tools.extend(create_email_tools(context))
     
     return tools

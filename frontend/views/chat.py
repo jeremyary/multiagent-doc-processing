@@ -190,6 +190,12 @@ def render_workflow_status_section():
 
 def render_chat_view():
     """Render the main chat interface."""
+    user = get_current_user()
+    
+    # Set user email for tools that need it
+    if user and user.email:
+        st.session_state.chat_agent.set_user_email(user.email)
+    
     for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -207,6 +213,15 @@ def render_chat_view():
                         key=f"history_download_{idx}",
                         type="primary",
                     )
+            
+            # Render email send button if message has pending email
+            if message["role"] == "assistant" and "pending_email" in message:
+                _render_email_action_buttons(message["pending_email"], idx)
+    
+    # Check for any unsent pending email (from previous interaction)
+    pending_email = st.session_state.chat_agent.get_pending_email()
+    if pending_email and not any("pending_email" in m for m in st.session_state.messages if m.get("role") == "assistant"):
+        st.info("You have a pending email draft. See the message above to send or cancel.")
     
     if prompt := st.chat_input("Ask your questions here..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
@@ -234,7 +249,6 @@ def render_chat_view():
                         key=f"agent_download_{len(st.session_state.messages)}",
                         type="primary",
                     )
-                    # Store download info in the message for re-rendering
                     response_with_download = {
                         "content": response,
                         "download": pending_download,
@@ -243,5 +257,59 @@ def render_chat_view():
                 else:
                     st.error("Report file not found.")
                     st.session_state.messages.append({"role": "assistant", "content": response})
+            # Check for pending email triggered by the agent
+            elif st.session_state.chat_agent.get_pending_email():
+                pending_email = st.session_state.chat_agent.get_pending_email()
+                _render_email_action_buttons(pending_email, len(st.session_state.messages))
+                response_with_email = {
+                    "content": response,
+                    "pending_email": pending_email,
+                }
+                st.session_state.messages.append({"role": "assistant", **response_with_email})
             else:
                 st.session_state.messages.append({"role": "assistant", "content": response})
+
+
+def _render_email_action_buttons(pending_email: dict, idx: int):
+    """Render email preview and send/cancel buttons."""
+    # Format body - convert newlines to <br> for proper HTML rendering
+    body_html = pending_email.get('body', '').replace('\n', '<br>')
+    
+    # Show email preview so user knows what they're approving
+    st.markdown(f"""
+<div style="background: #1e293b; border: 1px solid #334155; border-radius: 0.5rem; padding: 1rem; margin: 0.5rem 0 1rem 0;">
+<div style="color: #94a3b8; font-size: 0.85rem; margin-bottom: 0.75rem;">
+<strong>To:</strong> {pending_email.get('to', 'Unknown')}<br>
+<strong>Subject:</strong> {pending_email.get('subject', 'No subject')}
+</div>
+<div style="color: #e2e8f0; line-height: 1.5;">{body_html}</div>
+</div>
+""", unsafe_allow_html=True)
+    
+    # Buttons side by side using HTML
+    send_key = f"send_email_{idx}"
+    cancel_key = f"cancel_email_{idx}"
+    
+    btn_col1, btn_col2, _ = st.columns([1, 1, 4])
+    with btn_col1:
+        send_clicked = st.button("📧 Send", key=send_key, type="primary", use_container_width=True)
+    with btn_col2:
+        cancel_clicked = st.button("Cancel", key=cancel_key, use_container_width=True)
+    
+    if send_clicked:
+        result = st.session_state.chat_agent.send_pending_email()
+        st.success(result)
+        for msg in st.session_state.messages:
+            if msg.get("pending_email") == pending_email:
+                del msg["pending_email"]
+                break
+        st.rerun()
+    
+    if cancel_clicked:
+        st.session_state.chat_agent.clear_pending_email()
+        st.info("Email cancelled.")
+        for msg in st.session_state.messages:
+            if msg.get("pending_email") == pending_email:
+                del msg["pending_email"]
+                break
+        st.rerun()

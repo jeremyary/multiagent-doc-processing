@@ -27,6 +27,7 @@ class User:
     username: str
     name: str
     role: Role
+    email: str = ""
     
     @property
     def is_admin(self) -> bool:
@@ -108,7 +109,9 @@ def get_current_user() -> User | None:
     except ValueError:
         role = Role.BORROWER
     
-    return User(username=username, name=name, role=role)
+    email = user_config.get("email", "")
+    
+    return User(username=username, name=name, role=role, email=email)
 
 
 def require_auth(func):
