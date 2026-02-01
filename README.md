@@ -136,6 +136,8 @@ The landing page is available to all visitors (no login required):
 - **Mortgage Calculator** - Calculate monthly payments with principal, interest, taxes, and insurance
 - **Chat Assistant** - Ask general mortgage questions, search property data, or look up economic indicators
 
+![Landing page view](./docs/images/landing-view.png)
+
 Anonymous chat has access to:
 - Knowledge base search (mortgage regulations)
 - Property lookup tools (if BatchData API configured)
@@ -154,6 +156,8 @@ Log in to access full features:
 | Borrower | `borrower` | `borrower123` | Limited: Chat, Upload, Own Reports |
 
 User credentials are stored in `config/users.yaml`.
+
+![Authenticated user view](./docs/images/auth-view.png)
 
 ### Chat Assistant
 
@@ -189,6 +193,8 @@ When documents are classified as "Unknown Relevance" or have low confidence:
 3. Select the correct category or confirm as unknown
 4. Human-reviewed documents are marked in reports
 
+![Review view](./docs/images/review-view.png)
+
 ### Reports
 
 View generated reports in the **Reports** tab:
@@ -199,6 +205,8 @@ View generated reports in the **Reports** tab:
 - Download reports as PDF
 
 Borrowers see only their own reports; admins see all reports.
+
+![Report view](./docs/images/report-view.png)
 
 ## Technical Reference
 
