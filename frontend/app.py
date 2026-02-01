@@ -19,15 +19,12 @@ from frontend.auth import (
     get_current_user,
     get_user_thread_prefix,
     get_user_upload_dir,
-    render_login,
-    render_logout,
-    render_user_info,
 )
 from orchestrator import create_orchestrator
 
 # Page configuration
 st.set_page_config(
-    page_title="Mortgage Document Assistant",
+    page_title="Mortgage Assistant",
     page_icon="page_facing_up",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -45,7 +42,7 @@ st.markdown("""
         font-size: 1.8rem;
         font-weight: 600;
         margin-bottom: 0.5rem;
-        color: #1f2937;
+        color: #3973b5;
     }
     .sub-header {
         font-size: 0.9rem;
@@ -98,6 +95,20 @@ st.markdown("""
         color: #4b5563;
         margin-bottom: 0.25rem;
     }
+    /* Landing page styles */
+    .stMetric {
+        background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+        padding: 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #bae6fd;
+    }
+    .stMetric label {
+        color: #0369a1 !important;
+    }
+    .stMetric [data-testid="stMetricValue"] {
+        color: #0c4a6e !important;
+        font-weight: 700;
+    }
     /* Sidebar tab buttons - smaller font, no wrap */
     section[data-testid="stSidebar"] .stButton button {
         font-size: 0.75rem;
@@ -132,6 +143,10 @@ def init_session_state():
     """Initialize session state variables."""
     user = get_current_user()
     user_prefix = get_user_thread_prefix()
+    
+    # Clear anonymous chat messages when entering authenticated state
+    if "anon_messages" in st.session_state:
+        del st.session_state.anon_messages
     
     if "chat_thread_id" not in st.session_state:
         st.session_state.chat_thread_id = f"{user_prefix}chat-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
@@ -294,14 +309,41 @@ def list_reports(filter_by_user: bool = True) -> list[dict]:
     return reports
 
 
+def render_top_bar(title: str, subtitle: str = ""):
+    """Render the top bar with page title on left, user info and logout on right."""
+    from frontend.auth import get_authenticator
+    
+    user = get_current_user()
+    if not user:
+        return
+    
+    col1, col2, col3 = st.columns([6, 2, 1])
+    
+    with col1:
+        st.markdown(f'<div class="main-header">{title}</div>', unsafe_allow_html=True)
+        if subtitle:
+            st.markdown(f'<div class="sub-header">{subtitle}</div>', unsafe_allow_html=True)
+    
+    with col2:
+        role_display = "Admin" if user.is_admin else "Borrower"
+        st.markdown(
+            f"<div style='text-align: right; padding-top: 0.25rem; color: #9ca3af; font-size: 0.9rem;'>"
+            f"<strong>{user.name}</strong> ({role_display})"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+    
+    with col3:
+        authenticator = get_authenticator()
+        authenticator.logout(button_name="Logout", location="main")
+
+
 def render_sidebar():
     """Render the sidebar with session management and document processing."""
     user = get_current_user()
     
     with st.sidebar:
-        # User info and logout
-        render_user_info()
-        render_logout()
+        render_logo()
         st.divider()
         
         # View mode toggle - tabs depend on user role
@@ -571,12 +613,6 @@ def render_reports_sidebar():
 
 def render_chat():
     """Render the main chat interface."""
-    st.markdown('<div class="main-header">Mortgage Document Assistant</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="sub-header">Ask questions about mortgage documents, requirements, and the loan process</div>',
-        unsafe_allow_html=True
-    )
-    
     for idx, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -595,7 +631,7 @@ def render_chat():
                         type="primary",
                     )
     
-    if prompt := st.chat_input("Ask about mortgage documents..."):
+    if prompt := st.chat_input("Ask your questions here..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
@@ -636,12 +672,6 @@ def render_chat():
 
 def render_review_panel():
     """Render the human review interface."""
-    st.markdown('<div class="main-header">Human Review</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="sub-header">Classify documents that could not be automatically categorized</div>',
-        unsafe_allow_html=True
-    )
-    
     if not st.session_state.active_review:
         st.info("Select a pending review from the sidebar to begin.")
         return
@@ -762,12 +792,6 @@ def render_reports_panel():
     """Render the reports viewing interface."""
     import base64
     
-    st.markdown('<div class="main-header">Document Reports</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="sub-header">View and download generated classification reports</div>',
-        unsafe_allow_html=True
-    )
-    
     reports = list_reports()
     
     if not reports:
@@ -821,6 +845,181 @@ def render_reports_panel():
     st.markdown(pdf_display, unsafe_allow_html=True)
 
 
+def render_mortgage_calculator():
+    """Render an interactive mortgage calculator."""
+    st.markdown("### Mortgage Calculator")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        home_price = st.number_input(
+            "Home Price ($)", 
+            min_value=50000, 
+            max_value=10000000, 
+            value=350000, 
+            step=5000,
+            format="%d"
+        )
+        down_payment_pct = st.slider(
+            "Down Payment (%)", 
+            min_value=0, 
+            max_value=50, 
+            value=20
+        )
+        interest_rate = st.number_input(
+            "Interest Rate (%)", 
+            min_value=0.1, 
+            max_value=15.0, 
+            value=6.5, 
+            step=0.125,
+            format="%.3f"
+        )
+    
+    with col2:
+        loan_term = st.selectbox(
+            "Loan Term", 
+            options=[30, 20, 15, 10], 
+            index=0,
+            format_func=lambda x: f"{x} years"
+        )
+        property_tax_rate = st.number_input(
+            "Property Tax Rate (%/year)", 
+            min_value=0.0, 
+            max_value=5.0, 
+            value=1.2, 
+            step=0.1
+        )
+        insurance_annual = st.number_input(
+            "Home Insurance ($/year)", 
+            min_value=0, 
+            max_value=20000, 
+            value=1500, 
+            step=100
+        )
+    
+    # Calculate values
+    down_payment = home_price * (down_payment_pct / 100)
+    loan_amount = home_price - down_payment
+    monthly_rate = (interest_rate / 100) / 12
+    num_payments = loan_term * 12
+    
+    # Monthly principal & interest (standard amortization formula)
+    if monthly_rate > 0:
+        monthly_pi = loan_amount * (monthly_rate * (1 + monthly_rate)**num_payments) / ((1 + monthly_rate)**num_payments - 1)
+    else:
+        monthly_pi = loan_amount / num_payments
+    
+    monthly_tax = (home_price * (property_tax_rate / 100)) / 12
+    monthly_insurance = insurance_annual / 12
+    monthly_total = monthly_pi + monthly_tax + monthly_insurance
+    
+    total_interest = (monthly_pi * num_payments) - loan_amount
+    
+    # Display results
+    st.markdown("---")
+    
+    result_cols = st.columns(4)
+    with result_cols[0]:
+        st.metric("Monthly Payment", f"${monthly_total:,.0f}")
+    with result_cols[1]:
+        st.metric("Principal & Interest", f"${monthly_pi:,.0f}")
+    with result_cols[2]:
+        st.metric("Loan Amount", f"${loan_amount:,.0f}")
+    with result_cols[3]:
+        st.metric("Down Payment", f"${down_payment:,.0f}")
+    
+    # Payment breakdown
+    with st.expander("Payment Breakdown", expanded=True):
+        breakdown_cols = st.columns(3)
+        with breakdown_cols[0]:
+            st.markdown(f"**Principal & Interest:** ${monthly_pi:,.2f}/mo")
+        with breakdown_cols[1]:
+            st.markdown(f"**Property Tax:** ${monthly_tax:,.2f}/mo")
+        with breakdown_cols[2]:
+            st.markdown(f"**Insurance:** ${monthly_insurance:,.2f}/mo")
+        
+        st.markdown(f"**Total Interest Over Loan:** ${total_interest:,.0f}")
+        st.markdown(f"**Total Cost (Principal + Interest):** ${loan_amount + total_interest:,.0f}")
+
+
+def render_logo():
+    """Render the application logo in the sidebar."""
+    logo_path = Path(__file__).parent / "mort-logo.png"
+    if logo_path.exists():
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            st.image(str(logo_path), width=300)
+        st.markdown("")  # Spacing
+
+
+def render_landing_sidebar():
+    """Render the sidebar with login form for the landing page."""
+    from frontend.auth import get_authenticator
+    
+    with st.sidebar:
+        render_logo()
+        
+        st.markdown("### Sign In")
+        authenticator = get_authenticator()
+        authenticator.login(location="main")
+        
+        if st.session_state.get("authentication_status") is False:
+            st.error("Invalid credentials")
+        elif st.session_state.get("authentication_status") is None:
+            st.markdown("---")
+            st.caption("**Demo Credentials**")
+            st.code("admin / admin123", language=None)
+            st.code("borrower / borrower123", language=None)
+
+
+def render_anonymous_chat():
+    """Render a chat panel for anonymous (non-authenticated) users."""
+    # Initialize anonymous chat state
+    if "anon_messages" not in st.session_state:
+        st.session_state.anon_messages = []
+    
+    st.markdown("### Have questions?")
+    
+    # Display existing chat messages
+    for msg in st.session_state.anon_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+    
+    # Chat input - immediately show user message and spinner like authenticated chat
+    if prompt := st.chat_input("Ask about mortgage regulations, rates, loan process and more...", key="anon_chat_input"):
+        # Immediately display the user's message
+        st.session_state.anon_messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        # Show assistant response with spinner
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    chat_agent = get_chat_agent()
+                    response = chat_agent.chat_anonymous(
+                        message=prompt,
+                        session_messages=st.session_state.anon_messages[:-1]
+                    )
+                except Exception as e:
+                    print(f"Anonymous chat error: {e}")
+                    response = "I apologize, but I'm having trouble responding. Please try again."
+            
+            st.markdown(response)
+        
+        st.session_state.anon_messages.append({"role": "assistant", "content": response})
+
+
+def render_landing_page():
+    """Render the public landing page with mortgage calculator and anonymous chat."""
+    render_landing_sidebar()
+    
+    # Single column layout: calculator on top, chat below
+    render_mortgage_calculator()
+    st.markdown("---")
+    render_anonymous_chat()
+
+
 def main():
     """Main application entry point."""
     # Validate config first
@@ -831,31 +1030,38 @@ def main():
         st.info("Please ensure OPENAI_API_KEY is set in your .env file")
         return
     
-    # Authentication gate
-    if not render_login():
-        st.markdown("---")
-        st.markdown("**Demo Credentials:**")
-        st.markdown("- Admin: `admin` / `admin123`")
-        st.markdown("- Borrower: `borrower` / `borrower123`")
+    # Check authentication status
+    user = get_current_user()
+    
+    if not user:
+        # Show landing page with calculator and login
+        render_landing_page()
+        
+        # Check if user just logged in
+        if st.session_state.get("authentication_status"):
+            # Clear anonymous chat when logging in
+            if "anon_messages" in st.session_state:
+                del st.session_state.anon_messages
+            st.rerun()
         return
     
     # User is authenticated - initialize and render app
     init_session_state()
     render_sidebar()
     
-    user = get_current_user()
-    
     if st.session_state.view_mode == "chat":
+        render_top_bar("Hi, I'm your Mortgage Assistant!", "Ask me about mortgage regulations, requirements, or the loan process.")
         render_chat()
     elif st.session_state.view_mode == "review":
-        # Double-check permission (shouldn't reach here for borrowers)
-        if user and user.can_review_documents():
+        if user.can_review_documents():
+            render_top_bar("Human Review", "Classify documents that could not be automatically categorized")
             render_review_panel()
         else:
             st.error("You don't have permission to access document reviews.")
             st.session_state.view_mode = "chat"
             st.rerun()
     else:
+        render_top_bar("Document Reports", "View and download generated classification reports")
         render_reports_panel()
 
 

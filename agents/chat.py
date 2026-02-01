@@ -75,10 +75,15 @@ class ChatAgent:
         # Pending download (set by tool, consumed by frontend)
         self._pending_download: dict | None = None
         
-        # Build graph with tools
-        self._tools = self._get_tools()
+        # Build authenticated graph with all tools (uses checkpointer)
+        self._tools = self._get_tools(anonymous=False)
         self.graph = self._build_graph()
         self.compiled_graph = self.graph.compile(checkpointer=self.checkpointer)
+        
+        # Build anonymous graph with limited tools (no checkpointer - no history saved)
+        self._anonymous_tools = self._get_tools(anonymous=True)
+        self._anonymous_graph = self._build_graph(tools=self._anonymous_tools)
+        self._anonymous_compiled = self._anonymous_graph.compile()
     
     @property
     def llm(self) -> ChatOpenAI:
@@ -139,16 +144,14 @@ class ChatAgent:
             return thread_id.split("-chat-")[0]
         return "anonymous"
     
-    def _get_tools(self) -> list:
-        """Get the list of tools available to the agent."""
-        from prompts import (
-            TOOL_SEARCH_KNOWLEDGE_BASE,
-            TOOL_RECALL_CONVERSATIONS,
-            TOOL_GET_USER_FACTS,
-            TOOL_GET_MY_REPORTS,
-            TOOL_GET_MY_DOCUMENTS,
-            TOOL_PREPARE_DOWNLOAD,
-        )
+    def _get_tools(self, anonymous: bool = False) -> list:
+        """
+        Get the list of tools available to the agent.
+        
+        Args:
+            anonymous: If True, only include public tools (RAG, web search)
+        """
+        from prompts import TOOL_SEARCH_KNOWLEDGE_BASE
         
         tools = []
         
@@ -172,248 +175,247 @@ class ChatAgent:
         
         tools.append(search_knowledge_base)
         
-        @tool(description=TOOL_RECALL_CONVERSATIONS)
-        def recall_past_conversations(query: str) -> str:
-            memory = self.conversation_memory
-            if memory is None:
-                return "Conversation memory is not available."
+        # User-specific tools (only for authenticated users)
+        if not anonymous:
+            from prompts import (
+                TOOL_RECALL_CONVERSATIONS,
+                TOOL_GET_USER_FACTS,
+                TOOL_GET_MY_REPORTS,
+                TOOL_GET_MY_DOCUMENTS,
+                TOOL_PREPARE_DOWNLOAD,
+            )
             
-            user_id = self._current_user_id
-            if not user_id:
-                return "Unable to identify user for memory search."
-            
-            try:
-                result = memory.search_formatted(
-                    user_id=user_id,
-                    query=query,
-                    k=config.MEMORY_RECALL_TOP_K,
-                    exclude_thread=self._current_thread_id
-                )
-                return result
-            except Exception as e:
-                logger.warning(f"Conversation memory search failed: {e}")
-                return "Failed to search conversation memory."
-        
-        tools.append(recall_past_conversations)
-        
-        @tool(description=TOOL_GET_USER_FACTS)
-        def get_my_stored_facts() -> str:
-            user_id = self._current_user_id
-            if not user_id:
-                return "Unable to identify user."
-            
-            facts_store = self.facts_store
-            if facts_store is None:
-                return "User memory is not available."
-            
-            try:
-                facts = facts_store.get_facts(user_id)
-                if not facts:
-                    return "No facts stored about you yet. As we chat, I'll remember important details you share."
+            @tool(description=TOOL_RECALL_CONVERSATIONS)
+            def recall_past_conversations(query: str) -> str:
+                memory = self.conversation_memory
+                if memory is None:
+                    return "Conversation memory is not available."
                 
-                lines = [f"Here's what I remember about you ({len(facts)} facts):"]
-                for fact_type, details in facts.items():
-                    label = fact_type.replace("_", " ").title()
-                    lines.append(f"- {label}: {details['value']}")
-                return "\n".join(lines)
-            except Exception as e:
-                logger.warning(f"Failed to retrieve user facts: {e}")
-                return "Failed to retrieve stored facts."
-        
-        tools.append(get_my_stored_facts)
-        
-        @tool(description=TOOL_GET_MY_REPORTS)
-        def get_my_reports() -> str:
-            user_id = self._current_user_id
-            if not user_id:
-                return "Unable to identify user."
+                user_id = self._current_user_id
+                if not user_id:
+                    return "Unable to identify user for memory search."
+                
+                try:
+                    result = memory.search_formatted(
+                        user_id=user_id,
+                        query=query,
+                        k=config.MEMORY_RECALL_TOP_K,
+                        exclude_thread=self._current_thread_id
+                    )
+                    return result
+                except Exception as e:
+                    logger.warning(f"Conversation memory search failed: {e}")
+                    return "Failed to search conversation memory."
             
-            try:
-                from utils.report_store import get_report_store
-                store = get_report_store()
-                reports = store.get_reports(owner_id=user_id)
+            tools.append(recall_past_conversations)
+            
+            @tool(description=TOOL_GET_USER_FACTS)
+            def get_my_stored_facts() -> str:
+                user_id = self._current_user_id
+                if not user_id:
+                    return "Unable to identify user."
                 
-                if not reports:
-                    return "You don't have any reports yet. Upload and process documents to generate a report."
+                facts_store = self.facts_store
+                if facts_store is None:
+                    return "User memory is not available."
                 
-                lines = [f"You have {len(reports)} report(s):\n"]
-                
-                for r in reports[:5]:  # Show last 5 with details
-                    date = r["created_at"][:10]
-                    doc_count = r.get("document_count", 0)
-                    lines.append(f"Report from {date} ({doc_count} documents):")
+                try:
+                    facts = facts_store.get_facts(user_id)
+                    if not facts:
+                        return "No facts stored about you yet. As we chat, I'll remember important details you share."
                     
-                    summary = r.get("classification_summary")
-                    if summary:
-                        for category, data in sorted(summary.items()):
-                            count = data.get("count", 0)
-                            docs = data.get("documents", [])
-                            lines.append(f"  {category}: {count} document(s)")
-                            for doc in docs[:3]:  # Show first 3 per category
-                                conf = doc.get("confidence", 0)
-                                reviewed = " [human reviewed]" if doc.get("human_reviewed") else ""
-                                lines.append(f"    - {doc['name']} ({conf:.0%}){reviewed}")
-                            if len(docs) > 3:
-                                lines.append(f"    ... and {len(docs) - 3} more")
-                    else:
-                        lines.append("  (No classification details available)")
-                    lines.append("")
-                
-                if len(reports) > 5:
-                    lines.append(f"... and {len(reports) - 5} older report(s)")
-                
-                return "\n".join(lines)
-            except Exception as e:
-                logger.warning(f"Failed to retrieve reports: {e}")
-                return "Failed to retrieve report information."
-        
-        tools.append(get_my_reports)
-        
-        @tool(description=TOOL_GET_MY_DOCUMENTS)
-        def get_my_documents() -> str:
-            user_id = self._current_user_id
-            if not user_id:
-                return "Unable to identify user."
+                    lines = [f"Here's what I remember about you ({len(facts)} facts):"]
+                    for fact_type, details in facts.items():
+                        label = fact_type.replace("_", " ").title()
+                        lines.append(f"- {label}: {details['value']}")
+                    return "\n".join(lines)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve user facts: {e}")
+                    return "Failed to retrieve stored facts."
             
-            try:
-                from pathlib import Path
-                from utils.document_cache import DocumentCache
+            tools.append(get_my_stored_facts)
+            
+            @tool(description=TOOL_GET_MY_REPORTS)
+            def get_my_reports() -> str:
+                user_id = self._current_user_id
+                if not user_id:
+                    return "Unable to identify user."
                 
-                cache = DocumentCache()
-                
-                # Get documents from user's upload directories
-                uploads_dir = Path("uploads") / user_id
-                if not uploads_dir.exists():
-                    return "You haven't uploaded any documents yet."
-                
-                # Collect unique documents (dedupe by filename, keep most recent)
-                # Sort batches newest first so we keep the most recent version
-                unique_docs = {}
-                batch_dirs = sorted(uploads_dir.glob("batch-*"), reverse=True)
-                
-                for batch_dir in batch_dirs:
-                    for pdf in batch_dir.glob("*.pdf"):
-                        if pdf.name in unique_docs:
-                            continue  # Already have newer version
+                try:
+                    from utils.report_store import get_report_store
+                    store = get_report_store()
+                    reports = store.get_reports(owner_id=user_id)
+                    
+                    if not reports:
+                        return "You don't have any reports yet. Upload and process documents to generate a report."
+                    
+                    lines = [f"You have {len(reports)} report(s):\n"]
+                    
+                    for r in reports[:5]:
+                        date = r["created_at"][:10]
+                        doc_count = r.get("document_count", 0)
+                        lines.append(f"Report from {date} ({doc_count} documents):")
                         
-                        # Look up in cache by computing hash
-                        try:
-                            content_hash = cache.compute_hash(pdf)
-                            classified = cache.get_classification(content_hash)
-                            if classified:
+                        summary = r.get("classification_summary")
+                        if summary:
+                            for category, data in sorted(summary.items()):
+                                count = data.get("count", 0)
+                                docs = data.get("documents", [])
+                                lines.append(f"  {category}: {count} document(s)")
+                                for doc in docs[:3]:
+                                    conf = doc.get("confidence", 0)
+                                    reviewed = " [human reviewed]" if doc.get("human_reviewed") else ""
+                                    lines.append(f"    - {doc['name']} ({conf:.0%}){reviewed}")
+                                if len(docs) > 3:
+                                    lines.append(f"    ... and {len(docs) - 3} more")
+                        else:
+                            lines.append("  (No classification details available)")
+                        lines.append("")
+                    
+                    if len(reports) > 5:
+                        lines.append(f"... and {len(reports) - 5} older report(s)")
+                    
+                    return "\n".join(lines)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve reports: {e}")
+                    return "Failed to retrieve report information."
+            
+            tools.append(get_my_reports)
+            
+            @tool(description=TOOL_GET_MY_DOCUMENTS)
+            def get_my_documents() -> str:
+                user_id = self._current_user_id
+                if not user_id:
+                    return "Unable to identify user."
+                
+                try:
+                    from pathlib import Path
+                    from utils.document_cache import DocumentCache
+                    
+                    cache = DocumentCache()
+                    
+                    uploads_dir = Path("uploads") / user_id
+                    if not uploads_dir.exists():
+                        return "You haven't uploaded any documents yet."
+                    
+                    unique_docs = {}
+                    batch_dirs = sorted(uploads_dir.glob("batch-*"), reverse=True)
+                    
+                    for batch_dir in batch_dirs:
+                        for pdf in batch_dir.glob("*.pdf"):
+                            if pdf.name in unique_docs:
+                                continue
+                            
+                            try:
+                                content_hash = cache.compute_hash(pdf)
+                                classified = cache.get_classification(content_hash)
+                                if classified:
+                                    unique_docs[pdf.name] = {
+                                        "name": pdf.name,
+                                        "category": classified.category,
+                                        "confidence": classified.confidence,
+                                    }
+                                else:
+                                    unique_docs[pdf.name] = {
+                                        "name": pdf.name,
+                                        "category": "Not yet classified",
+                                        "confidence": 0,
+                                    }
+                            except Exception:
                                 unique_docs[pdf.name] = {
                                     "name": pdf.name,
-                                    "category": classified.category,
-                                    "confidence": classified.confidence,
-                                }
-                            else:
-                                unique_docs[pdf.name] = {
-                                    "name": pdf.name,
-                                    "category": "Not yet classified",
+                                    "category": "Unknown",
                                     "confidence": 0,
                                 }
-                        except Exception:
-                            unique_docs[pdf.name] = {
-                                "name": pdf.name,
-                                "category": "Unknown",
-                                "confidence": 0,
-                            }
-                
-                documents = list(unique_docs.values())
-                
-                if not documents:
-                    return "No documents found in your upload history."
-                
-                # Group by category
-                by_category = {}
-                for doc in documents:
-                    cat = doc["category"]
-                    if cat not in by_category:
-                        by_category[cat] = []
-                    by_category[cat].append(doc["name"])
-                
-                lines = [f"You have {len(documents)} unique document(s) on file:"]
-                for category, files in sorted(by_category.items()):
-                    lines.append(f"\n{category} ({len(files)}):")
-                    for f in sorted(files):
-                        conf = next((d["confidence"] for d in documents if d["name"] == f), 0)
-                        if conf > 0:
-                            lines.append(f"  - {f} ({conf:.0%} confidence)")
-                        else:
-                            lines.append(f"  - {f}")
-                
-                # Note about batches
-                lines.append(f"\nDocuments from {len(batch_dirs)} upload session(s).")
-                
-                return "\n".join(lines)
-            except Exception as e:
-                logger.warning(f"Failed to retrieve documents: {e}")
-                return "Failed to retrieve document information."
-        
-        tools.append(get_my_documents)
-        
-        @tool(description=TOOL_PREPARE_DOWNLOAD)
-        def prepare_report_download(report_id: int | None = None, confirmed: bool = False) -> str:
-            user_id = self._current_user_id
-            if not user_id:
-                return "Unable to identify user."
-            
-            try:
-                from utils.report_store import get_report_store
-                from config import config
-                
-                store = get_report_store()
-                
-                # If no report_id, get the most recent report for this user
-                if report_id is None:
-                    reports = store.get_reports(owner_id=user_id)
-                    if not reports:
-                        return "You don't have any reports to download."
-                    report = reports[0]  # Most recent
-                    report_id = report["id"]
-                else:
-                    # Look up specific report with ownership verification
-                    report = store.get_report_by_id(report_id, owner_id=user_id)
-                    if not report:
-                        return "Report not found or you don't have access to it."
-                
-                # Verify the file exists
-                report_path = config.OUTPUT_REPORT_DIR / report["filename"]
-                if not report_path.exists():
-                    return "The report file is no longer available."
-                
-                if not confirmed:
-                    # Step 1: Return details for confirmation
-                    date = report["created_at"][:10]
-                    doc_count = report.get("document_count", 0)
                     
-                    details = [
-                        f"I found this report ready for download:",
-                        f"",
-                        f"  Report ID: {report_id}",
-                        f"  Date: {date}",
-                        f"  Documents: {doc_count}",
-                        f"  Filename: {report['filename']}",
-                        f"",
-                        f"Would you like me to prepare this report for download?",
-                    ]
-                    return "\n".join(details)
-                else:
-                    # Step 2: Store download info for frontend to render
-                    self._pending_download = {
-                        "report_id": report_id,
-                        "filename": report["filename"],
-                        "filepath": str(report_path),
-                    }
-                    return f"Your report '{report['filename']}' is ready. A download button will appear below."
+                    documents = list(unique_docs.values())
+                    
+                    if not documents:
+                        return "No documents found in your upload history."
+                    
+                    by_category = {}
+                    for doc in documents:
+                        cat = doc["category"]
+                        if cat not in by_category:
+                            by_category[cat] = []
+                        by_category[cat].append(doc["name"])
+                    
+                    lines = [f"You have {len(documents)} unique document(s) on file:"]
+                    for category, files in sorted(by_category.items()):
+                        lines.append(f"\n{category} ({len(files)}):")
+                        for f in sorted(files):
+                            conf = next((d["confidence"] for d in documents if d["name"] == f), 0)
+                            if conf > 0:
+                                lines.append(f"  - {f} ({conf:.0%} confidence)")
+                            else:
+                                lines.append(f"  - {f}")
+                    
+                    lines.append(f"\nDocuments from {len(batch_dirs)} upload session(s).")
+                    
+                    return "\n".join(lines)
+                except Exception as e:
+                    logger.warning(f"Failed to retrieve documents: {e}")
+                    return "Failed to retrieve document information."
             
-            except Exception as e:
-                logger.warning(f"Failed to prepare download: {e}")
-                return "Failed to prepare report for download."
+            tools.append(get_my_documents)
+            
+            @tool(description=TOOL_PREPARE_DOWNLOAD)
+            def prepare_report_download(report_id: int | None = None, confirmed: bool = False) -> str:
+                user_id = self._current_user_id
+                if not user_id:
+                    return "Unable to identify user."
+                
+                try:
+                    from utils.report_store import get_report_store
+                    from config import config
+                    
+                    store = get_report_store()
+                    
+                    if report_id is None:
+                        reports = store.get_reports(owner_id=user_id)
+                        if not reports:
+                            return "You don't have any reports to download."
+                        report = reports[0]
+                        report_id = report["id"]
+                    else:
+                        report = store.get_report_by_id(report_id, owner_id=user_id)
+                        if not report:
+                            return "Report not found or you don't have access to it."
+                    
+                    report_path = config.OUTPUT_REPORT_DIR / report["filename"]
+                    if not report_path.exists():
+                        return "The report file is no longer available."
+                    
+                    if not confirmed:
+                        date = report["created_at"][:10]
+                        doc_count = report.get("document_count", 0)
+                        
+                        details = [
+                            f"I found this report ready for download:",
+                            f"",
+                            f"  Report ID: {report_id}",
+                            f"  Date: {date}",
+                            f"  Documents: {doc_count}",
+                            f"  Filename: {report['filename']}",
+                            f"",
+                            f"Would you like me to prepare this report for download?",
+                        ]
+                        return "\n".join(details)
+                    else:
+                        self._pending_download = {
+                            "report_id": report_id,
+                            "filename": report["filename"],
+                            "filepath": str(report_path),
+                        }
+                        return f"Your report '{report['filename']}' is ready. A download button will appear below."
+                
+                except Exception as e:
+                    logger.warning(f"Failed to prepare download: {e}")
+                    return "Failed to prepare report for download."
+            
+            tools.append(prepare_report_download)
         
-        tools.append(prepare_report_download)
-        
-        # Property Data Tools (only if BatchData API key is configured)
+        # Property Data Tools (if BatchData API key is configured)
         from utils.batchdata import is_available as batchdata_available
         
         if batchdata_available():
@@ -563,9 +565,9 @@ class ChatAgent:
         
         return base_prompt
     
-    def _build_graph(self) -> StateGraph:
+    def _build_graph(self, tools: list | None = None) -> StateGraph:
         """Build the chat graph with guardrails and tool-calling capabilities."""
-        tools = self._tools
+        tools = tools or self._tools
         llm_with_tools = self.llm.bind_tools(tools)
         
         from utils.guardrails import (
@@ -776,6 +778,78 @@ class ChatAgent:
             
         finally:
             # Clear context
+            self._current_user_id = None
+            self._current_thread_id = None
+    
+    def chat_anonymous(self, message: str, session_messages: list[dict] | None = None) -> str:
+        """
+        Send a message as an anonymous (unauthenticated) user.
+        
+        Anonymous users:
+        - Only have access to RAG knowledge base and web search tools
+        - No history is persisted (must pass previous messages if needed)
+        - No user facts or personal data access
+        - Still traced in LangFuse for monitoring
+        
+        Args:
+            message: User's message
+            session_messages: Optional list of previous messages for context
+                              Each dict should have 'role' ('user'/'assistant') and 'content'
+            
+        Returns:
+            Assistant's response text
+        """
+        self._current_user_id = "anonymous"
+        self._current_thread_id = None
+        
+        invoke_config = {}
+        
+        # Add LangFuse callback for tracing
+        langfuse_enabled = bool(os.getenv('LANGFUSE_SECRET_KEY'))
+        if langfuse_enabled:
+            try:
+                from langfuse.callback import CallbackHandler as LangfuseCallbackHandler
+                langfuse_handler = LangfuseCallbackHandler(
+                    session_id="anonymous-landing",
+                    metadata={
+                        "agent": "chat_agent",
+                        "mode": "anonymous",
+                    }
+                )
+                invoke_config["callbacks"] = [langfuse_handler]
+            except ImportError:
+                pass
+        
+        try:
+            # Build messages list with optional context
+            messages = []
+            if session_messages:
+                for msg in session_messages:
+                    if msg.get("role") == "user":
+                        messages.append(HumanMessage(content=msg["content"]))
+                    elif msg.get("role") == "assistant":
+                        messages.append(AIMessage(content=msg["content"]))
+            
+            messages.append(HumanMessage(content=message))
+            
+            result = self._anonymous_compiled.invoke(
+                {"messages": messages},
+                invoke_config
+            )
+            
+            if result.get("input_blocked"):
+                logger.info(f"Anonymous request blocked: {result.get('input_block_reason')}")
+                return "I'm not able to process that request. Please try rephrasing."
+            
+            response_text = None
+            for msg in reversed(result["messages"]):
+                if isinstance(msg, AIMessage) and not getattr(msg, 'tool_calls', None):
+                    response_text = msg.content
+                    break
+            
+            return response_text or "I apologize, but I couldn't generate a response."
+            
+        finally:
             self._current_user_id = None
             self._current_thread_id = None
     
