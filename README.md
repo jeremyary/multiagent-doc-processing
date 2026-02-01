@@ -101,177 +101,129 @@ source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-Create a `.env` file in the project root:
+Configure environment variables:
 
-```env
-# Required
-OPENAI_API_KEY=sk-...
+```bash
+cp .env.example .env
+# Edit .env and add your OPENAI_API_KEY (required)
+# See .env.example for all available options
+```
 
-# Optional - Custom OpenAI-compatible endpoint
-OPENAI_BASE_URL=https://api.openai.com/v1
-OPENAI_MODEL=gpt-4o-mini
+### Sample Data
 
-# Optional - LangFuse observability
-LANGFUSE_PUBLIC_KEY=pk-...
-LANGFUSE_SECRET_KEY=sk-...
-LANGFUSE_HOST=https://cloud.langfuse.com
+Generate fictional documents for testing:
 
-# Optional - External API integrations (tools available when keys present)
-BATCHDATA_API_KEY=...          # Property/address lookup (batchdata.com)
-BRAVE_SEARCH_API_KEY=...       # Web search (brave.com/search/api)
+```bash
+# Sample mortgage documents (28 PDFs including 3 scanned for OCR testing)
+python create_sample_pdfs.py
 
-# Optional - OCR settings
-OCR_ENABLED=true
-OCR_MIN_CHARS_PER_PAGE=50
-OCR_MIN_FREE_VRAM_GB=3.0
-
-# Optional - RAG settings
-RAG_EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
-
-# Optional - Guardrails (all enabled by default)
-GUARDRAILS_ENABLED=true
-GUARDRAILS_INTENT_CHECK=true   # LLM-based jailbreak detection
-GUARDRAILS_DETECT_PII=true     # Detect PII in input
-GUARDRAILS_MASK_PII=true       # Mask detected PII
+# Sample knowledge base (mortgage regulations)
+python create_knowledge_base.py
 ```
 
 ## Usage
 
-### Sample Data
-
-Generate fictional document input set for testing:
+Start the web UI:
 
 ```bash
-python create_sample_pdfs.py
+streamlit run frontend/app.py
 ```
 
-Creates 28 sample PDFs in `input_pdfs/`:
-- 25 machine-generated PDFs covering all document categories
-- 3 image-based PDFs (scanned documents) for OCR testing
+### Landing Page
 
-File names are omitted from classification context to better test model capabilities, but can be reintroduced for more realistic scenarios.
+The landing page is available to all visitors (no login required):
 
-### Basic Usage
+- **Mortgage Calculator** - Calculate monthly payments with principal, interest, taxes, and insurance
+- **Chat Assistant** - Ask general mortgage questions, search property data, or look up economic indicators
 
-```bash
-# Place PDFs in input_pdfs/ directory, then:
-python main.py
+Anonymous chat has access to:
+- Knowledge base search (mortgage regulations)
+- Property lookup tools (if BatchData API configured)
+- Web search (if Brave API configured)
+- Economic data (if FRED API configured)
 
-# Output report generated in output_reports/
-```
+Anonymous sessions are traced but not persisted.
 
-### CLI Options
+### Authentication
 
-```bash
-python main.py [OPTIONS]
+Log in to access full features:
 
-Options:
-  -i, --input-dir PATH      Input directory containing PDFs (default: ./input_pdfs)
-  -o, --output-dir PATH     Output directory for reports (default: ./output_reports)
-  -l, --limit N             Process only first N documents (default: all)
-  --thread-id ID            Thread ID for checkpointing (auto-resumes if checkpoint exists)
-  --no-checkpointing        Disable state checkpointing (disables resume capability)
-  --session-id ID           Session ID for LangFuse tracking
+| Role | Username | Password | Access |
+|------|----------|----------|--------|
+| Admin | `admin` | `admin123` | Full access: Chat, Reviews, Reports |
+| Borrower | `borrower` | `borrower123` | Limited: Chat, Upload, Own Reports |
 
-Cache options:
-  --cache-stats             Display cache statistics and exit
-  --clear-cache             Clear document cache before processing
-  --no-cache                Disable caching for this run
-```
+User credentials are stored in `config/users.yaml`.
 
-### Resuming Interrupted Workflows
+### Chat Assistant
 
-Workflows are automatically checkpointed to SQLite. If interrupted, resume by passing the same thread ID:
+The authenticated chat assistant provides personalized help:
 
-```bash
-# Initial run displays thread ID
-python main.py
-# Thread ID: doc-20260131-071500
+- **Knowledge Base** - Search mortgage regulations (TILA, RESPA, ECOA, etc.)
+- **User Memory** - Remembers facts you share (loan type, timeline, etc.) across sessions
+- **Conversation Recall** - Search past conversations for context
+- **Document Tools** - Ask about your uploaded documents and reports
+- **Property Lookup** - Verify addresses, get property details, search listings
+- **Web Search** - Find current information (news, rates, etc.)
+- **Economic Data** - Get mortgage rates, Fed funds rate, CPI, unemployment from FRED
 
-# Resume later (auto-detects existing checkpoint)
-python main.py --thread-id doc-20260131-071500
-```
+Previous chat sessions are listed in the sidebar for easy switching.
 
-## Human-in-the-Loop Review
+### Document Upload & Processing
 
-When documents are classified as "Unknown Relevance", the workflow prompts for manual review:
+In the sidebar:
 
-```
-HUMAN REVIEW: Unknown Relevance Documents
---------------------------------------------------
-Document: misc_document.pdf
-Pages: 2
-Summary: A document containing...
-Key Entities: ...
+1. **Upload PDFs** - Select one or more mortgage-related documents
+2. **Process Documents** - Click to run the classification workflow:
+   - Text extraction (OCR for scanned documents)
+   - AI classification into mortgage categories
+   - Results cached for fast re-processing
+3. **View Results** - Check the Reports tab for your classification summary
 
-Select category (1-18, or 0 to skip): 
-```
+### Human Review (Admin Only)
 
-Options:
-- Select a category number to reclassify
-- Confirm as "Unknown Relevance" (irrelevant to mortgage)
-- Skip to keep AI classification
+When documents are classified as "Unknown Relevance" or have low confidence:
 
-Human-reviewed documents are marked in the final report with their original AI classification noted.
+1. Navigate to the **Reviews** tab
+2. View document details (summary, entities, AI classification)
+3. Select the correct category or confirm as unknown
+4. Human-reviewed documents are marked in reports
 
-## Knowledge Base (RAG)
+### Reports
 
-The chat assistant can use Retrieval-Augmented Generation (RAG) to answer questions about mortgage regulations.
+View generated reports in the **Reports** tab:
 
-### Setup
+- Classification summary with document counts by category
+- Individual document details with confidence scores
+- Human review annotations where applicable
+- Download reports as PDF
 
-```bash
-# Generate sample regulation PDFs
-python create_knowledge_base.py
+Borrowers see only their own reports; admins see all reports.
 
-# Ingest into vector store
-python main.py --ingest-knowledge
-```
+## Technical Reference
 
-### RAG CLI Options
-
-```bash
-python main.py [RAG OPTIONS]
-
-Options:
-  --ingest-knowledge      Ingest PDFs from knowledge_base/ into vector store
-  --knowledge-stats       Display knowledge base statistics
-  --clear-knowledge       Clear the knowledge base
-  --knowledge-dir PATH    Custom knowledge base directory
-```
-
-### Chat & Memory CLI Options
-
-```bash
-python main.py [CHAT OPTIONS]
-
-Options:
-  --chat-stats            Display chat session statistics
-  --clear-chat-history    Clear all chat history
-  --memory-stats          Display user memory statistics
-  --clear-memory          Clear user facts and conversation memory
-  --user USERNAME         Scope memory operations to specific user
-```
-
-## Chat Agent Tools
+### Chat Agent Tools
 
 The chat agent uses a ReAct architecture with dynamically available tools:
 
 | Tool | Availability | Description |
 |------|--------------|-------------|
 | `search_knowledge_base` | When RAG ingested | Semantic search over mortgage regulations |
-| `recall_past_conversations` | Always | Search previous conversations for context |
-| `get_my_stored_facts` | Always | Retrieve remembered user facts |
-| `get_my_reports` | Always | List user's document reports |
-| `get_my_documents` | Always | List user's processed documents |
-| `prepare_report_download` | Always | Prepare a report for download |
+| `recall_past_conversations` | Authenticated | Search previous conversations for context |
+| `get_my_stored_facts` | Authenticated | Retrieve remembered user facts |
+| `get_my_reports` | Authenticated | List user's document reports |
+| `get_my_documents` | Authenticated | List user's processed documents |
+| `prepare_report_download` | Authenticated | Prepare a report for download |
 | `verify_property_address` | When `BATCHDATA_API_KEY` set | USPS address verification |
 | `get_property_details` | When `BATCHDATA_API_KEY` set | Property details, valuation, history |
 | `search_properties` | When `BATCHDATA_API_KEY` set | Search properties by criteria |
 | `geocode_address` | When `BATCHDATA_API_KEY` set | Convert address to coordinates |
 | `web_search` | When `BRAVE_SEARCH_API_KEY` set | Web search for current information |
+| `fred_get_series` | When `FRED_API_KEY` set | Get economic data series (rates, CPI, etc.) |
+| `fred_search_series` | When `FRED_API_KEY` set | Search for FRED data series |
+| `fred_mortgage_rates` | When `FRED_API_KEY` set | Get current 30/15-year mortgage rates |
 
-## Guardrails
+### Guardrails
 
 Defense-in-depth security for the chat agent:
 
@@ -281,43 +233,64 @@ Defense-in-depth security for the chat agent:
 | **Layer 2: Intent** | LLM-based | Detects jailbreaks, prompt injection, social engineering |
 | **Layer 3: Output** | Deterministic | System prompt leak detection, PII filtering |
 
-Guardrails run as LangGraph nodes, visible in traces. Configure via environment variables (see Setup).
-
-## Web UI
-
-A Streamlit-based interface with role-based access control.
-
-```bash
-streamlit run frontend/app.py
-```
-
-### Authentication
-
-The UI requires login with one of two roles:
-
-| Role | Username | Password | Access |
-|------|----------|----------|--------|
-| Admin | `admin` | `admin123` | Full access: Chat, Reviews, Reports |
-| Borrower | `borrower` | `borrower123` | Limited: Chat, Upload, Own Reports |
-
-User credentials are stored in `config/users.yaml`. To add users or change passwords:
-
-```bash
-# Generate password hash
-python -c "import streamlit_authenticator as stauth; print(stauth.Hasher().hash('your_password'))"
-```
-
-### Views by Role
-
-| View | Borrower | Admin |
-|------|----------|-------|
-| **Chat** | Ask questions, toggle RAG | Same |
-| **Document Upload** | Upload and process PDFs | Same |
-| **Reviews** | No access | Classify unknown documents |
-| **Reports** | View own reports | View all reports |
+Guardrails run as LangGraph nodes, visible in traces. Configure via environment variables.
 
 ### Data Isolation
 
 - Upload directories are scoped by username: `uploads/{username}/batch-{timestamp}/`
 - Workflow thread IDs include username prefix: `{username}-ui-{timestamp}`
 - Chat sessions are user-specific: `{username}-chat-{timestamp}`
+
+## CLI Reference
+
+The CLI provides utilities for maintenance, debugging, and batch processing.
+
+### Document Processing
+
+```bash
+python main.py [OPTIONS]
+
+Options:
+  -i, --input-dir PATH      Input directory containing PDFs (default: ./input_pdfs)
+  -o, --output-dir PATH     Output directory for reports (default: ./output_reports)
+  -l, --limit N             Process only first N documents
+  --thread-id ID            Resume a specific workflow (auto-resumes if checkpoint exists)
+  --no-checkpointing        Disable state checkpointing
+  --session-id ID           Session ID for LangFuse tracking
+```
+
+### Cache Management
+
+```bash
+python main.py --cache-stats       # View cache statistics
+python main.py --clear-cache       # Clear document extraction/classification cache
+python main.py --no-cache          # Disable caching for this run
+```
+
+### Knowledge Base (RAG)
+
+```bash
+python main.py --ingest-knowledge      # Ingest PDFs from knowledge_base/
+python main.py --knowledge-stats       # View knowledge base statistics
+python main.py --clear-knowledge       # Clear the knowledge base
+python main.py --knowledge-dir PATH    # Use custom knowledge base directory
+```
+
+### Chat & Memory
+
+```bash
+python main.py --chat-stats            # View chat session statistics
+python main.py --clear-chat-history    # Clear all chat history
+python main.py --memory-stats          # View user memory statistics
+python main.py --clear-memory          # Clear user facts and conversation memory
+python main.py --user USERNAME         # Scope memory operations to specific user
+```
+
+### Adding Users
+
+```bash
+# Generate password hash for new user
+python -c "import streamlit_authenticator as stauth; print(stauth.Hasher().hash('your_password'))"
+```
+
+Add the hashed password to `config/users.yaml`.

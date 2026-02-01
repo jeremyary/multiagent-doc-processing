@@ -103,6 +103,14 @@ class Config:
     BRAVE_SEARCH_BASE_URL: str = os.getenv("BRAVE_SEARCH_BASE_URL", "https://api.search.brave.com/res/v1")
     
     # ==========================================================================
+    # FRED API (Federal Reserve Economic Data)
+    # ==========================================================================
+    # If API key is not set, economic data tool will be unavailable
+    # Get an API key at: https://fred.stlouisfed.org/docs/api/api_key.html
+    FRED_API_KEY: str = os.getenv("FRED_API_KEY", "")
+    FRED_BASE_URL: str = os.getenv("FRED_BASE_URL", "https://api.stlouisfed.org/fred")
+    
+    # ==========================================================================
     # Guardrails Settings (Defense in Depth)
     # ==========================================================================
     # Enable/disable guardrails (all disabled = pass-through mode)
